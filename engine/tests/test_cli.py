@@ -245,3 +245,80 @@ def test_admin_import_publishes_public_assets_to_kv(monkeypatch):
         f"publish_public_assets, and publish_redirects exactly once each; "
         f"got {calls}"
     )
+
+
+def test_root_handler_returns_friendly_landing():
+    """GET / should return a JSON pointer to the public site + admin
+    UI instead of aiohttp's default 404. The engine is API-only; the
+    landing response makes that clear so an operator typing the
+    Tailscale IP into a browser gets something useful."""
+    import json as _json
+    from aiohttp.test_utils import make_mocked_request
+    from engine.admin import server
+
+    req = make_mocked_request("GET", "/")
+    resp = asyncio.run(server.handle_root(req))
+    assert resp.status == 200
+    body = _json.loads(resp.body)
+    assert body["service"] == "treefrog-engine"
+    # `endpoints` lists include the HTTP verb prefix in the admin
+    # array (e.g. "GET  /api/admin/stats"); assert on substring so
+    # the test doesn't break if we reformat the list later.
+    public_joined = " ".join(body["endpoints"]["public"])
+    admin_joined = " ".join(body["endpoints"]["admin"])
+    assert "/api/channels.json" in public_joined
+    assert "/api/admin/stats" in admin_joined
+
+
+def test_admin_ui_handler_injects_token(monkeypatch, tmp_path):
+    """GET /admin (or /admin/) should serve the bound-in admin
+    index.html with a <meta name="admin-token"> tag containing the
+    engine's configured ADMIN_TOKEN. The admin UI's JavaScript reads
+    that meta tag and sends it as `Authorization: Bearer ...` on
+    every /api/admin/* call.
+
+    We point the handler at a tmp directory with a synthetic
+    index.html so the test doesn't depend on the real static asset
+    being mounted.
+    """
+    import json as _json
+    from aiohttp.test_utils import make_mocked_request
+    from engine.admin import server
+
+    fake_index = tmp_path / "index.html"
+    fake_index.write_text(
+        "<!doctype html><html><head><title>x</title></head><body></body></html>",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(server, "_ADMIN_STATIC_DIR", tmp_path)
+
+    req = make_mocked_request("GET", "/admin/")
+    resp = asyncio.run(server.handle_admin_ui(req))
+    assert resp.status == 200, f"expected 200, got {resp.status}"
+    body = resp.body.decode("utf-8")
+    assert "<meta name=\"admin-token\"" in body
+    # The token in the meta tag must match CONFIG.admin_token
+    import re
+    m = re.search(r'<meta name="admin-token" content="([^"]*)"', body)
+    assert m, "admin-token meta tag missing"
+    from engine.config import CONFIG
+    assert m.group(1) == CONFIG.admin_token
+    # And Cache-Control must be no-store so a token change takes effect
+    assert resp.headers.get("Cache-Control") == "no-store"
+
+
+def test_admin_ui_handler_503_when_assets_unmounted(monkeypatch, tmp_path):
+    """If the static assets aren't bound in (e.g. dev environment
+    without docker-compose), the handler returns 503 with a clear
+    message rather than aiohttp's default 404."""
+    from aiohttp.test_utils import make_mocked_request
+    from engine.admin import server
+
+    empty_dir = tmp_path / "empty"
+    empty_dir.mkdir()
+    monkeypatch.setattr(server, "_ADMIN_STATIC_DIR", empty_dir)
+
+    req = make_mocked_request("GET", "/admin/")
+    resp = asyncio.run(server.handle_admin_ui(req))
+    assert resp.status == 503
+    assert "not mounted" in resp.text.lower()

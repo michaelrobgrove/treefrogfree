@@ -112,6 +112,48 @@ async def handle_stats(request: web.Request) -> web.Response:
     return web.json_response(catalog["stats"])
 
 
+async def handle_root(_request: web.Request) -> web.Response:
+    """Friendly landing page so / doesn't 404 when someone types the
+    engine's Tailscale IP into a browser. The admin UI lives at
+    https://free.tfplus.stream/admin/ (served by the Cloudflare Worker
+    static assets); the engine itself is a JSON API only."""
+    return web.json_response(
+        {
+            "service": "treefrog-engine",
+            "version": "1.0",
+            "note": "JSON API only. Browse the public catalog at "
+                    "https://free.tfplus.stream/. Admin UI at "
+                    "https://free.tfplus.stream/admin/.",
+            "endpoints": {
+                "public": [
+                    "/api/channels.json",
+                    "/api/stats",
+                    "/playlist.m3u",
+                    "/api/epg.xml",
+                    "/api/epg.xml.gz",
+                    "/healthz",
+                ],
+                "admin": [
+                    "GET  /api/admin/stats",
+                    "GET  /api/admin/dead-streams",
+                    "GET  /api/admin/channels",
+                    "POST /api/admin/import",
+                    "POST /api/admin/check-once",
+                    "POST /api/admin/publish",
+                    "POST /api/admin/rebuild-kv",
+                ],
+            },
+        }
+    )
+
+
+# Path to the admin UI's static assets inside the container. Bound in
+# via docker-compose.yml from ../edge/public/admin (relative to the
+# engine/ directory). The admin UI talks to the engine at the same
+# origin (no CORS, no mixed-content). See handle_admin_ui().
+_ADMIN_STATIC_DIR = Path("/app/admin_static")
+
+
 async def handle_epg_xml(request: web.Request) -> web.Response:
     xml = await render_epg_xml()
     if not xml:
@@ -323,6 +365,46 @@ async def handle_epg_import(request: web.Request) -> web.Response:
     return web.json_response(summary)
 
 
+async def handle_admin_ui(_request: web.Request) -> web.Response:
+    """Serve the admin UI's index.html. Bound in via docker-compose
+    from ../edge/public/admin (see docker-compose.yml). Serving the UI
+    from the engine itself (over Tailscale) means the UI's fetch()
+    calls go to the same origin — no CORS, no mixed-content, no
+    proxy. Visiting http://<engine>:8000/admin/ is the canonical URL
+    for the admin dashboard.
+
+    The admin API requires a Bearer token, so we inject the engine's
+    configured ADMIN_TOKEN into the page via a <meta> tag. The UI
+    reads it and sends it on every /api/admin/* call. The token is
+    the same one the operator uses for curl; this is a single-user
+    admin surface, not a multi-tenant login.
+    """
+    index = _ADMIN_STATIC_DIR / "index.html"
+    if not index.is_file():
+        return web.Response(
+            status=503,
+            text=(
+                "Admin UI assets are not mounted into the container. "
+                "Bind-mount ../edge/public/admin to /app/admin_static in "
+                "engine/docker-compose.yml and rebuild."
+            ),
+        )
+    body = index.read_text(encoding="utf-8")
+    # Inject the token as a <meta> tag just before </head> so the UI
+    # can read it via document.querySelector('meta[name="admin-token"]').
+    # The Cache-Control: no-store below ensures the injected token
+    # never gets cached at any layer — a new engine start with a new
+    # token must take effect on the next request.
+    meta = f'<meta name="admin-token" content="{CONFIG.admin_token}">'
+    body = body.replace("</head>", f"  {meta}\n  </head>", 1)
+    return web.Response(
+        body=body,
+        content_type="text/html",
+        charset="utf-8",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 # ---------------------------------------------------------------------------
 # App factory + runner
 # ---------------------------------------------------------------------------
@@ -331,6 +413,9 @@ async def handle_epg_import(request: web.Request) -> web.Response:
 def build_app() -> web.Application:
     app = web.Application(middlewares=[admin_auth_middleware])
     # Public
+    app.router.add_get("/", handle_root)
+    app.router.add_get("/admin", handle_admin_ui)
+    app.router.add_get("/admin/", handle_admin_ui)
     app.router.add_get("/api/channels.json", handle_channels_json)
     app.router.add_get("/api/stats", handle_stats)
     app.router.add_get("/playlist.m3u", handle_playlist)

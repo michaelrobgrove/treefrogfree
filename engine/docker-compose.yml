@@ -22,10 +22,17 @@ services:
       #   host:  /root/.secrets/cf.token  (chmod 600)
       #   engine reads /secrets/cf.token → real token value
       - /root/.secrets:/secrets:ro
-    # Host networking: aiohttp binds directly to 127.0.0.1:8000 on the
-    # VPS host. Avoids the docker-proxy userland forwarder (which was
-    # RST'ing host-to-container connections on this kernel). Still
-    # safe — aiohttp is hard-coded to ADMIN_HOST=127.0.0.1, so it
-    # never listens on 0.0.0.0 or any external interface. Tailscale
-    # devices reach it via the host's Tailscale IP as before.
+      # Mount the admin UI's static assets (../edge/public/admin) into
+      # the container so the engine can serve the dashboard at
+      # http://<engine>:8000/admin/. Same-origin = no mixed content,
+      # no CORS, no proxy. Path inside the container is fixed:
+      # /app/admin_static. See engine/admin/server.py::handle_admin_ui.
+      - ../edge/public/admin:/app/admin_static:ro
+    # Host networking: aiohttp binds directly to the host's
+    # ADMIN_HOST:ADMIN_PORT (default 0.0.0.0:8000). Avoids the
+    # docker-proxy userland forwarder (which was RST'ing host-to-
+    # container connections on this kernel). Bind 0.0.0.0 is safe
+    # ONLY because UFW restricts port 8000 to the Tailscale subnet
+    # 100.64.0.0/10. See docs/vps-deploy.md §2.3 for the
+    # `ufw allow from 100.64.0.0/10 to any port 8000` rule.
     network_mode: host
