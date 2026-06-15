@@ -26,4 +26,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
 
 # Default: scheduler loop. Override with `python -m engine seed --m3u <url>`
 # or `python -m engine check-once` for one-shot operations.
-CMD ["python", "-m", "engine"]
+CMD ["python", "-m", "engine", "serve"]

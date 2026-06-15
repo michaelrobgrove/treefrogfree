@@ -57,10 +57,13 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 async def _cmd_serve(_args: argparse.Namespace) -> int:
-    # Defer to scheduler.main so signal handling is consistent.
-    from .scheduler import main as _scheduler_main
+    # Defer to scheduler._run_forever so signal handling and shutdown
+    # are consistent with the scheduler's own entry point. The async
+    # dispatch in main() already wraps us in an event loop, so we just
+    # await the coroutine rather than calling asyncio.run() again.
+    from .scheduler import _run_forever
 
-    _scheduler_main()
+    await _run_forever()
     return 0
 
 

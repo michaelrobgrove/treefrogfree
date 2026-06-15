@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Hard resource caps so the engine coexists with AIOstreams on the same host.
 # See plan.md §12.1 for the reasoning.
 services:
