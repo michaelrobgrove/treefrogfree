@@ -21,7 +21,7 @@ from .db import open_db, run_migrations
 from .health import run_health_cycle
 from .importers.importer import import_m3u
 from .publisher.json_catalog import write_catalog
-from .publisher.kv import publish_public_assets
+from .publisher.kv import publish_public_assets, publish_redirects
 from .publisher.playlist import write_playlist
 
 log = logging.getLogger("treefrog")
@@ -72,10 +72,15 @@ async def _cmd_seed(args: argparse.Namespace) -> int:
     summary = await import_m3u(args.m3u, source_label=args.label)
     # Republish to disk and KV so the public site reflects the new
     # import immediately, not 30 minutes later at the next health cycle.
+    # write_playlist mints redirect tokens for newly-online channels;
+    # publish_redirects then pushes those tokens to KV so /s/<token>
+    # 302s resolve; publish_public_assets pushes the catalog/playlist
+    # snapshot.
     await write_playlist()
     await write_catalog()
+    redir = await publish_redirects(force=True)
     pub = await publish_public_assets(force=True)
-    log.info("seed: KV public assets published: %s", pub)
+    log.info("seed: KV redirects=%s, public=%s", redir, pub)
     print(json.dumps(summary, indent=2))
     return 0
 
@@ -89,10 +94,14 @@ async def _cmd_check_once(_args: argparse.Namespace) -> int:
 async def _cmd_publish(_args: argparse.Namespace) -> int:
     p1 = await write_playlist()
     p2 = await write_catalog()
+    # write_playlist mints redirect tokens for any newly-online channels;
+    # push them so /s/<token> lookups work immediately.
+    redir = await publish_redirects(force=True)
     pub = await publish_public_assets(force=True)
     print(f"playlist: {p1}")
     print(f"catalog:  {p2}")
-    print(f"kv:       {pub}")
+    print(f"kv redirects: {redir}")
+    print(f"kv public:    {pub}")
     return 0
 
 

@@ -225,10 +225,16 @@ async def handle_admin_import(request: web.Request) -> web.Response:
         )
     # Republish artifacts so the change is visible immediately, both
     # on-disk and in Cloudflare KV (which the public Worker reads).
+    # `write_playlist` mints redirect tokens for any new online channels
+    # by populating the `redirects` table; `publish_redirects` then
+    # pushes those tokens (with their stream URLs) to KV so /s/<token>
+    # 302s resolve. `publish_public_assets` pushes the catalog/playlist
+    # snapshot.
     await write_playlist()
     await write_catalog()
+    redir = await publish_redirects(force=True)
     pub = await publish_public_assets(force=True)
-    log.info("import: KV public assets published: %s", pub)
+    log.info("import: KV redirects=%s, public=%s", redir, pub)
     return web.json_response(summary)
 
 
@@ -236,16 +242,23 @@ async def handle_admin_check_once(_request: web.Request) -> web.Response:
     summary = await run_health_cycle()
     await write_playlist()
     await write_catalog()
+    # `write_playlist` mints redirect tokens for any channels that just
+    # came online; `publish_redirects` pushes them to KV so /s/<token>
+    # lookups on the public site 302 correctly.
+    redir = await publish_redirects(force=True)
     pub = await publish_public_assets(force=True)
-    log.info("check-once: KV public assets published: %s", pub)
+    log.info("check-once: KV redirects=%s, public=%s", redir, pub)
     return web.json_response(summary)
 
 
 async def handle_admin_publish(_request: web.Request) -> web.Response:
     p = await write_playlist()
     c = await write_catalog()
+    # Re-rendering the playlist may have minted new redirect tokens for
+    # channels whose winner just changed; push them too.
+    redir = await publish_redirects(force=True)
     pub = await publish_public_assets(force=True)
-    return web.json_response({"playlist": p, "catalog": c, "kv_public": pub})
+    return web.json_response({"playlist": p, "catalog": c, "kv_redirects": redir, "kv_public": pub})
 
 
 async def handle_admin_rebuild_kv(_request: web.Request) -> web.Response:

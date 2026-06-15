@@ -143,13 +143,14 @@ def test_seed_publishes_public_assets_to_kv(monkeypatch, caplog):
     """Regression: `seed` used to write to disk only. The public Worker
     reads from KV, so the playlist/catalog stayed empty until the next
     scheduled health cycle (up to 30 min later). Seed must now also
-    call publish_public_assets(force=True) so the change is visible
-    on the public site immediately.
+    call publish_public_assets(force=True) and publish_redirects(force=True)
+    so both the public catalog/playlist AND the per-channel /s/<token>
+    redirects land in KV immediately.
     """
     import logging
     from engine import __main__ as cli
 
-    calls = {"publish": 0, "playlist": 0, "catalog": 0}
+    calls = {"publish_public": 0, "publish_redirects": 0, "playlist": 0, "catalog": 0}
 
     async def _fake_import_m3u(*_a, **_kw):
         return {"channels_new": 1, "streams_new": 1, "duplicates": 0, "total": 1, "errors": 0}
@@ -163,14 +164,20 @@ def test_seed_publishes_public_assets_to_kv(monkeypatch, caplog):
         return "fake-catalog"
 
     async def _fake_publish_public_assets(*, force=False):
-        calls["publish"] += 1
+        calls["publish_public"] += 1
         assert force is True, "publish must be forced on seed/check-once"
         return {"written": 2, "unchanged": 0, "errors": 0}
+
+    async def _fake_publish_redirects(*, force=False):
+        calls["publish_redirects"] += 1
+        assert force is True, "publish_redirects must be forced on seed/check-once"
+        return {"written": 1, "deleted": 0, "unchanged": 0, "errors": 0, "total": 1}
 
     monkeypatch.setattr(cli, "import_m3u", _fake_import_m3u)
     monkeypatch.setattr(cli, "write_playlist", _fake_write_playlist)
     monkeypatch.setattr(cli, "write_catalog", _fake_write_catalog)
     monkeypatch.setattr(cli, "publish_public_assets", _fake_publish_public_assets)
+    monkeypatch.setattr(cli, "publish_redirects", _fake_publish_redirects)
 
     with caplog.at_level(logging.INFO, logger="treefrog"):
         rc = asyncio.run(cli._cmd_seed(
@@ -178,22 +185,22 @@ def test_seed_publishes_public_assets_to_kv(monkeypatch, caplog):
         ))
 
     assert rc == 0
-    assert calls == {"publish": 1, "playlist": 1, "catalog": 1}, (
-        f"seed must call write_playlist, write_catalog, and publish_public_assets "
-        f"exactly once each; got {calls}"
+    assert calls == {"publish_public": 1, "publish_redirects": 1, "playlist": 1, "catalog": 1}, (
+        f"seed must call write_playlist, write_catalog, publish_public_assets, "
+        f"and publish_redirects exactly once each; got {calls}"
     )
 
 
 def test_admin_import_publishes_public_assets_to_kv(monkeypatch):
     """Regression: the admin /api/admin/import handler used to write
-    to disk only. Now it must also push the playlist+catalog to KV so
-    the public site reflects the import without waiting for the next
-    health cycle.
+    to disk only. Now it must also push the playlist+catalog AND the
+    per-channel redirect tokens to KV so the public site reflects the
+    import without waiting for the next health cycle.
     """
     from aiohttp.test_utils import make_mocked_request
     from engine.admin import server
 
-    calls = {"publish": 0, "playlist": 0, "catalog": 0}
+    calls = {"publish_public": 0, "publish_redirects": 0, "playlist": 0, "catalog": 0}
 
     async def _fake_import_m3u(*_a, **_kw):
         return {"channels_new": 1, "streams_new": 1, "duplicates": 0, "total": 1, "errors": 0}
@@ -207,14 +214,20 @@ def test_admin_import_publishes_public_assets_to_kv(monkeypatch):
         return "ok"
 
     async def _fake_publish_public_assets(*, force=False):
-        calls["publish"] += 1
+        calls["publish_public"] += 1
         assert force is True
         return {"written": 2, "unchanged": 0, "errors": 0}
+
+    async def _fake_publish_redirects(*, force=False):
+        calls["publish_redirects"] += 1
+        assert force is True
+        return {"written": 1, "deleted": 0, "unchanged": 0, "errors": 0, "total": 1}
 
     monkeypatch.setattr(server, "import_m3u", _fake_import_m3u)
     monkeypatch.setattr(server, "write_playlist", _fake_write_playlist)
     monkeypatch.setattr(server, "write_catalog", _fake_write_catalog)
     monkeypatch.setattr(server, "publish_public_assets", _fake_publish_public_assets)
+    monkeypatch.setattr(server, "publish_redirects", _fake_publish_redirects)
 
     # Build a request whose .json() returns our body. We don't need
     # real body parsing — the handler only reads two fields (url, label).
@@ -227,7 +240,8 @@ def test_admin_import_publishes_public_assets_to_kv(monkeypatch):
 
     resp = asyncio.run(server.handle_admin_import(req))
     assert resp.status == 200, f"expected 200, got {resp.status}"
-    assert calls == {"publish": 1, "playlist": 1, "catalog": 1}, (
-        f"handle_admin_import must call write_playlist, write_catalog, and "
-        f"publish_public_assets exactly once each; got {calls}"
+    assert calls == {"publish_public": 1, "publish_redirects": 1, "playlist": 1, "catalog": 1}, (
+        f"handle_admin_import must call write_playlist, write_catalog, "
+        f"publish_public_assets, and publish_redirects exactly once each; "
+        f"got {calls}"
     )
