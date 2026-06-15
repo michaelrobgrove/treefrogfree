@@ -127,19 +127,22 @@ LOG_LEVEL=INFO
 ```
 
 **Security note:** if you'd rather not have raw tokens in a dotenv
-file, use the `${VAR}_FILE` pattern (docker compose supports it
-natively):
+file, use the `${VAR}_FILE` pattern. The engine reads `${VAR}_FILE`
+before `${VAR}`, so you can mix-and-match. The compose file already
+bind-mounts `/root/.secrets` from the host into the container at
+`/secrets:ro`, so:
 
 ```bash
-# Create the token file
-sudo mkdir -p /root/.secrets
-sudo nano /root/.secrets/cf.token     # paste the API token, single line
-sudo nano /root/.secrets/admin.token  # paste a 32-byte random token
+# Create the token file on the HOST (not inside the container)
+sudo mkdir -p /root/.secrets && sudo chmod 700 /root/.secrets
+echo -n 'your-real-cf-token' | sudo tee /root/.secrets/cf.token >/dev/null
+echo -n "$(openssl rand -hex 32)" | sudo tee /root/.secrets/admin.token >/dev/null
 sudo chmod 600 /root/.secrets/*.token
 
-# Reference it in .env
-echo 'CF_API_TOKEN_FILE=/root/.secrets/cf.token' >> /opt/treefrogfree/engine/.env
-echo 'ADMIN_TOKEN_FILE=/root/.secrets/admin.token' >> /opt/treefrogfree/engine/.env
+# Reference it in .env — note the path is /secrets/... because that's
+# the in-container mount point, not the host path.
+echo 'CF_API_TOKEN_FILE=/secrets/cf.token' >> /opt/treefrogfree/engine/.env
+echo 'ADMIN_TOKEN_FILE=/secrets/admin.token' >> /opt/treefrogfree/engine/.env
 ```
 
 Then re-run the script (or just `docker compose up -d`).

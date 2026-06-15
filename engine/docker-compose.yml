@@ -15,6 +15,13 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      # Mount the host's secrets dir as a read-only filesystem inside
+      # the container. Combined with CF_*_FILE env vars in .env, this
+      # gives you a complete *_FILE → file path chain:
+      #   .env:  CF_API_TOKEN_FILE=/secrets/cf.token
+      #   host:  /root/.secrets/cf.token  (chmod 600)
+      #   engine reads /secrets/cf.token → real token value
+      - /root/.secrets:/secrets:ro
     # Bind the admin API to 127.0.0.1 on the HOST only. It's still not
     # reachable from the public internet — only from the VPS host
     # itself, and from Tailscale devices that route to this host's
