@@ -1,21 +1,20 @@
-# Tree Frog Streams — Optional proxy stack (Samsung + Pluto + DistroTV + Cabernet)
+# Tree Frog Streams — Optional proxy stack (Samsung + DistroTV + Cabernet)
 #
-# These four containers are *not* required for the engine to work —
-# they're a one-shot path to ~500 additional "free" channels sourced
-# from Samsung TV Plus, Pluto TV, DistroTV, and (via Cabernet) Xumo /
-# Plex / custom M3U/XMLTV feeds. They run alongside tf-engine and
+# These containers are *not* required for the engine to work —
+# they're a one-shot path to ~700 additional "free" channels sourced
+# from Samsung TV Plus, DistroTV, and (via Cabernet) Xumo / Plex /
+# Pluto / custom M3U/XMLTV feeds. They run alongside tf-engine and
 # publish M3U+XMLTV endpoints that the engine imports the same way it
 # imports any other playlist.
 #
 # Architecture:
 #   ┌─────────────────┐   m3u+xmltv    ┌──────────┐    m3u+xmltv     ┌──────────────┐
 #   │ samsung-tvplus  │ ─────────────▶ │          │ ────────────────▶│   Worker     │
-#   │ pluto-for-chans │                │ tf-engine│   KV catalog     │ free.tfplus. │
-#   │ distrotv-proxy  │                │ 8000     │   KV playlist    │    stream    │
-#   │ cabernet        │ ─────────────▶ │          │                  └──────────────┘
-#   └─────────────────┘                └──────────┘
+#   │ distrotv-proxy  │                │ tf-engine│   KV catalog     │ free.tfplus. │
+#   │ cabernet        │ ─────────────▶ │ 8000     │   KV playlist    │    stream    │
+#   └─────────────────┘                └──────────┘                  └──────────────┘
 #
-# All four bind via `network_mode: host` because (a) they don't need
+# All three bind via `network_mode: host` because (a) they don't need
 # isolation between each other and the engine, (b) M3U/EPG endpoints
 # are friendlier to type as localhost:PORT than as docker-network IPs,
 # and (c) the resource caps below make the host kernel the
@@ -28,6 +27,27 @@
 #
 # See docs/proxy-stack.md for the per-proxy setup steps, auth
 # requirements, and the import commands.
+#
+# ── Port allocation on the host (DO NOT change without reading this) ──
+#
+#   80        — Pluto for Channels' *preferred* port. (NOT in this
+#               file; Pluto was dropped in favor of Cab's Pluto
+#               plugin. See proxy-stack.md §3.)
+#   3000      — **AIOstreams** (operator's most important service).
+#               RESERVED. Do not bind anything here. Do not curl
+#               127.0.0.1:3000 as a diagnostic for any proxy.
+#   3001      — Samsung TV Plus (this file).
+#   6077      — Cabernet (this file).
+#   8000      — Tree Frog engine (docker-compose.yml).
+#   8787      — DistroTV Proxy (this file).
+#   50005     — SSH (already running on the host; never bind here).
+#
+# The matthuisman channels-dvr images (Samsung, the original
+# Pluto-for-Channels) all default to port 80 — only one can hold
+# that port at a time. Pluto is dropped in favor of Cab's Pluto
+# plugin, so Samsung gets port 80 cleanly. But to keep the
+# AIOstreams reservation crystal clear, we also pin Samsung to
+# 3001 via the PORT env var (which the matthuisman image honors).
 
 services:
   # ──────────────────────────────────────────────────────────────────
@@ -62,11 +82,14 @@ services:
   # ~400 ad-supported "Samsung TV Plus" channels. Channels DVR–compat
   # backend, so the URL shape is `/tuner-N-playlist.m3u` + `/epg.xml`.
   #
-  # The image binds a non-default port — DON'T assume 80. Probe with
-  # `curl -s http://<host>:<PORT>/` and look for the index page that
-  # lists "tuner-1-playlist.m3u" through "tuner-12-playlist.m3u".
-  # (On the operator's host Samsung ended up on port 3000.) See
-  # proxy-stack.md §2.
+  # The matthuisman image defaults to port 80. We pin it to 3001
+  # via the PORT env var to:
+  #   1. keep AIOstreams (port 3000) untouched
+  #   2. avoid collision with the (now-dropped) Pluto container
+  #   3. leave room for any future matthuisman image at port 80
+  #
+  # M3U path:  http://<host>:3001/tuner-1-playlist.m3u
+  # XMLTV:     http://<host>:3001/epg.xml
   samsung-tvplus:
     image: matthuisman/samsung-tvplus-for-channels:latest
     container_name: tf-samsung-tvplus
@@ -78,51 +101,12 @@ services:
     mem_limit: 256m
     mem_reservation: 128m
     pids_limit: 100
-
-  # ──────────────────────────────────────────────────────────────────
-  # 3. Pluto for Channels (jonmaddox/pluto-for-channels)
-  #    https://github.com/jonmaddox/pluto-for-channels
-  # ──────────────────────────────────────────────────────────────────
-  # ~250 free, ad-supported channels. Like Samsung, it's a matthuisman
-  # Channels DVR server (nginx + uvicorn), so the URL shape is
-  # `/tuner-1-playlist.m3u` + `/epg.xml` on port 80. **It will not
-  # serve any M3U until PLUTO_USERNAME + PLUTO_PASSWORD are
-  # configured** — the image errors out at startup without them. See
-  # proxy-stack.md §3 for the creds setup.
-  #
-  # The `${VAR}_FILE` env pattern below matches how the main
-  # engine compose reads CF_API_TOKEN_FILE / ADMIN_TOKEN_FILE. Put
-  # the real values in /root/.secrets/pluto_user and pluto_password
-  # (chmod 600); do NOT inline them in this file.
-  pluto-for-channels:
-    image: jonmaddox/pluto-for-channels:latest
-    container_name: tf-pluto-for-channels
-    restart: unless-stopped
-    network_mode: host
-    volumes:
-      - ./data/pluto-for-channels:/config
-      # Same _FILE pattern as docker-compose.yml: the host's secrets
-      # dir is bind-mounted read-only into the container, and the
-      # *FILE env vars point at the in-container paths. The values
-      # are loaded from /root/.secrets/{pluto_user,pluto_password}.
-      - /root/.secrets:/secrets:ro
-    cpus: 0.25
-    mem_limit: 256m
-    mem_reservation: 128m
-    pids_limit: 100
     environment:
-      # Channels DVR emulation mode. The upstream image already
-      # defaults to this when run standalone, but pinning it makes
-      # the intent obvious.
-      - MODE=docker
-      # REQUIRED: a free Pluto account (any email, no card needed)
-      # at https://pluto.tv/. Drop the creds in token files on the
-      # host (chmod 600), not inline here.
-      - PLUTO_USERNAME_FILE=/secrets/pluto_user
-      - PLUTO_PASSWORD_FILE=/secrets/pluto_password
+      # Pin to 3001 — see comment block at top of file.
+      - PORT=3001
 
   # ──────────────────────────────────────────────────────────────────
-  # 4. Cabernet (ghcr.io/cabernetwork/cabernet)
+  # 3. Cabernet (ghcr.io/cabernetwork/cabernet)
   #    https://github.com/cabernetwork/cabernet
   # ──────────────────────────────────────────────────────────────────
   # The "all-in-one master". Plugin-based bridge that turns free
@@ -132,12 +116,20 @@ services:
   # per-source proxies is the **plugin ecosystem**: it normalizes
   # 30+ sources and dedupes by channel name + region.
   #
+  # **Cab subsumes Pluto** — Cab's "Pluto" plugin (under
+  # Settings → Plugins) pulls from the same Pluto API the
+  # standalone `jonmaddox/pluto-for-channels` container would,
+  # but the source-cred lifecycle is handled in one place and
+  # dedup happens across all enabled plugins. We don't run the
+  # standalone Pluto container in this stack to avoid the
+  # double-pull.
+  #
   # Cab's admin UI at http://<host>:6077/ must be opened in a
   # browser once on first boot to set the admin password and pick
   # which plugins to enable. Until that's done, /m3u/channels.m3u
   # returns an 8-byte stub. See proxy-stack.md §4.
   #
-  # Cab needs more memory than the other three — the plugin
+  # Cab needs more memory than the other two — the plugin
   # loaders cache EPG XMLTV and channel lists in process.
   cabernet:
     image: ghcr.io/cabernetwork/cabernet:latest
