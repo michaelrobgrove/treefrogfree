@@ -433,8 +433,13 @@ async def handle_admin_ui(_request: web.Request) -> web.Response:
             status=503,
             text=(
                 "Admin UI assets are not mounted into the container. "
-                "Bind-mount ../edge/public/admin to /app/admin_static in "
-                "engine/docker-compose.yml and rebuild."
+                "On the VPS, fix this with:\n"
+                "  cd /opt/treefrogfree && git pull\n"
+                "  docker compose -f engine/docker-compose.yml up -d --build\n"
+                "Note: `docker compose restart` does NOT re-bind volumes — "
+                "you must `up -d --build` (or stop+rm+up).\n"
+                "The bind mount is `../edge/public/admin -> /app/admin_static` "
+                "in engine/docker-compose.yml."
             ),
         )
     body = index.read_text(encoding="utf-8")
