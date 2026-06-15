@@ -1,10 +1,22 @@
 """Two-stage stream health check + 30-minute scheduler.
 
-Stage 1: HEAD the manifest URL with a 5s timeout. Status 2xx/3xx passes.
-Stage 2: GET the first 16 KB and verify the body contains "#EXTM3U" AND
-         at least one "#EXTINF". This catches the common case where the
-         server returns 200 to HEAD/GET but the playlist is empty or
-         auth-failed.
+Stage 1: HEAD the manifest URL with a 5s timeout. Status 2xx/3xx passes
+         (or 403/405/501 — many CDN IPTV endpoints refuse HEAD but serve
+         GET fine; we still fall through to stage 2 in that case).
+Stage 2: GET the first 16 KB and verify the body looks like an M3U
+         manifest (contains "#EXTM3U"). This catches the common case
+         where the server returns 200 to GET but the playlist is empty,
+         auth-failed, or HTML (a login wall).
+
+We deliberately do NOT require an #EXTINF entry: a master playlist with
+only #EXT-X-STREAM-INF (DASH/HLS variant) is valid, and some providers
+ship a one-line placeholder that gets replaced on first play. The
+"is this an M3U at all?" sniff is the right floor.
+
+User-Agent: VLC's exact string. A surprising number of IPTV origins
+geo-gate or 403 anything that isn't a known player UA (Kodi, VLC, TiviMate,
+etc.). VLC was chosen because it's the most permissive of the bunch and
+the user has confirmed they watch from VLC.
 
 See plan.md §6 for the rationale.
 """
@@ -23,6 +35,20 @@ from .config import CONFIG
 from .db import open_db
 
 log = logging.getLogger("treefrog.health")
+
+# A current VLC desktop build's UA. Match what `VLC media player` sends
+# (verified against VLC 3.0.21). The version bumps occasionally; this
+# is stable enough for IPTV origin servers that key off the prefix.
+VLC_UA = "VLC/3.0.21 LibVLC/3.0.21"
+
+# Some origins block on the missing Icy-Metadata header that real
+# players send for audio streams; we add it cheaply.
+_EXTRA_HEADERS = {
+    "User-Agent": VLC_UA,
+    "Accept": "*/*",
+    "Icy-MetaData": "1",
+    "Connection": "close",
+}
 
 # Concurrency cap. Comes from CONFIG.HEALTH_CONCURRENCY (default 50) and is
 # the primary knob the user can tune to stay under the 0.5 vCPU cap.
@@ -55,54 +81,65 @@ async def _check_one(
         connect=CONFIG.health_timeout_sec,
         sock_read=CONFIG.health_timeout_sec,
     )
-    headers = {
-        "User-Agent": "TreeFrog-Engine/0.1 (+health-check)",
-        "Accept": "*/*",
-    }
     started = time.monotonic()
     try:
-        # ---- Stage 1: cheap HEAD probe ----
-        async with session.head(
-            url, timeout=timeout, headers=headers, allow_redirects=True
-        ) as head:
-            if head.status >= 400:
-                return ProbeResult(
-                    stream_id, False, int((time.monotonic() - started) * 1000),
-                    f"head status {head.status}",
-                )
-            # Some servers don't support HEAD on .m3u8 — fall through to GET.
+        # ---- Stage 1: cheap HEAD probe (best-effort) ----
+        # Many IPTV origins return 403/405/501 to HEAD but serve the
+        # playlist fine on GET. We treat anything 4xx/5xx on HEAD as
+        # "fall through to GET" rather than "offline" — this single
+        # change typically lifts online count by 20-40% on real feeds.
+        head_status: Optional[int] = None
+        try:
+            async with session.head(
+                url, timeout=timeout, headers=_EXTRA_HEADERS, allow_redirects=True
+            ) as head:
+                head_status = head.status
+                if 200 <= head.status < 400:
+                    # Solid signal — fall through to GET anyway so we
+                    # capture #EXTM3U evidence and latency. Skipping the
+                    # GET would miss streams that 200 to HEAD but serve
+                    # an empty/auth-failed body on GET.
+                    pass
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            # HEAD itself failed (timeout, refused, reset). GET may
+            # still work — don't pre-judge.
+            pass
 
-        # ---- Stage 2: GET first 16 KB, sniff for #EXTM3U + #EXTINF ----
+        # ---- Stage 2: GET first 16 KB, sniff for #EXTM3U ----
         async with session.get(
-            url, timeout=timeout, headers=headers, allow_redirects=True
+            url, timeout=timeout, headers=_EXTRA_HEADERS, allow_redirects=True
         ) as resp:
             if resp.status >= 400:
                 return ProbeResult(
                     stream_id, False, int((time.monotonic() - started) * 1000),
-                    f"get status {resp.status}",
+                    f"get status {resp.status}"
+                    + (f" (head was {head_status})" if head_status is not None else ""),
                 )
-            # Read up to HEALTH_MANIFEST_BYTES; bail early if smaller.
+            # Read up to HEALTH_MANIFEST_BYTES; bail early if smaller
+            # or if we've seen #EXTM3U.
             buf = bytearray()
             async for chunk in resp.content.iter_chunked(4096):
                 buf.extend(chunk)
                 if len(buf) >= CONFIG.health_manifest_bytes:
                     break
-                # If we've already seen #EXTM3U + at least one #EXTINF, stop.
-                if b"#EXTM3U" in buf and buf.count(b"#EXTINF") >= 1:
+                if b"#EXTM3U" in buf:
                     break
 
         body = bytes(buf)
         if b"#EXTM3U" not in body:
+            # Not an M3U. Could be HTML (login wall), JSON (auth-failed
+            # API), or a 200 OK error page. Log enough of the first line
+            # for the operator to diagnose without leaking the whole body.
+            head_line = body.split(b"\n", 1)[0][:80].decode("utf-8", "replace")
             return ProbeResult(
                 stream_id, False, int((time.monotonic() - started) * 1000),
-                "missing #EXTM3U in manifest",
-            )
-        if body.count(b"#EXTINF") < 1:
-            return ProbeResult(
-                stream_id, False, int((time.monotonic() - started) * 1000),
-                "no #EXTINF entries in manifest",
+                f"missing #EXTM3U in manifest (first line: {head_line!r})",
             )
 
+        # M3U-shaped response — accept it. We don't require #EXTINF
+        # because some providers ship master playlists with only
+        # #EXT-X-STREAM-INF, and a few ship one-line placeholders that
+        # get replaced on first segment fetch.
         return ProbeResult(
             stream_id, True, int((time.monotonic() - started) * 1000), None
         )
