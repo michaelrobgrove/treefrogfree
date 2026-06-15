@@ -13,12 +13,14 @@
  *   /                  → index.html
  *   /channel.html      → channel detail page
  *   /playlist.html     → playlist + setup guide
- *   /admin/            → admin SPA
  *   /assets/*          → JS, SVG
  *
- * The admin UI talks to the engine directly over Tailscale (the engine
- * binds to 127.0.0.1:8000 and is never reachable from the public internet).
- * The Worker does not proxy any /api/* traffic.
+ * The admin UI used to live at /admin/ in the static assets, but the
+ * engine now serves it itself (Tailscale-only, with the bearer token
+ * injected as a <meta> tag). The Worker cannot reach Tailscale from
+ * the edge, so we 410 Gone any /admin* path here — anyone who lands
+ * on the public URL gets a clear "moved" message instead of a broken
+ * page that tries to call /api/admin/* over the public Worker.
  *
  * See plan.md §7 for the design rationale.
  */
@@ -63,6 +65,28 @@ export default {
     // ---- /s/<token>: the redirect hot path ----
     if (path.startsWith("/s/")) {
       return handleStreamRedirect(path, env);
+    }
+
+    // ---- /admin*: the admin UI moved to the engine (Tailscale only) ----
+    if (path === "/admin" || path === "/admin/" || path.startsWith("/admin/")) {
+      return new Response(
+        "The admin UI is no longer served from the public Worker. " +
+        "Reach it over Tailscale at http://100.81.208.64:8000/admin/ " +
+        "(or whichever Tailscale IP the engine reports). " +
+        "The engine injects the bearer token as a <meta> tag so the " +
+        "dashboard is authenticated via the same ADMIN_TOKEN you put " +
+        "in engine/.env.",
+        {
+          status: 410,
+          headers: {
+            "Content-Type": "text/plain; charset=utf-8",
+            // Cache the Gone for a day so we don't keep re-handling it
+            // (and so a stale browser tab stops retrying).
+            "Cache-Control": "public, max-age=86400",
+            "Retry-After": "86400",
+          },
+        },
+      );
     }
 
     // ---- Public read path: served from KV, cached at the edge ----
