@@ -22,12 +22,10 @@ services:
       #   host:  /root/.secrets/cf.token  (chmod 600)
       #   engine reads /secrets/cf.token → real token value
       - /root/.secrets:/secrets:ro
-    # Bind the admin API to 127.0.0.1 on the HOST only. It's still not
-    # reachable from the public internet — only from the VPS host
-    # itself, and from Tailscale devices that route to this host's
-    # Tailscale IP. No other interface is exposed.
-    #
-    # If you don't need Tailscale access (e.g. you do everything from
-    # the VPS host via `docker exec`), comment this block out.
-    ports:
-      - "127.0.0.1:8000:8000"
+    # Host networking: aiohttp binds directly to 127.0.0.1:8000 on the
+    # VPS host. Avoids the docker-proxy userland forwarder (which was
+    # RST'ing host-to-container connections on this kernel). Still
+    # safe — aiohttp is hard-coded to ADMIN_HOST=127.0.0.1, so it
+    # never listens on 0.0.0.0 or any external interface. Tailscale
+    # devices reach it via the host's Tailscale IP as before.
+    network_mode: host

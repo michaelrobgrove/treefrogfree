@@ -223,9 +223,12 @@ async def handle_admin_import(request: web.Request) -> web.Response:
             {"error": f"import failed: {type(e).__name__}: {e}", "url": url},
             status=502,
         )
-    # Republish artifacts so the change is visible immediately.
+    # Republish artifacts so the change is visible immediately, both
+    # on-disk and in Cloudflare KV (which the public Worker reads).
     await write_playlist()
     await write_catalog()
+    pub = await publish_public_assets(force=True)
+    log.info("import: KV public assets published: %s", pub)
     return web.json_response(summary)
 
 
@@ -233,6 +236,8 @@ async def handle_admin_check_once(_request: web.Request) -> web.Response:
     summary = await run_health_cycle()
     await write_playlist()
     await write_catalog()
+    pub = await publish_public_assets(force=True)
+    log.info("check-once: KV public assets published: %s", pub)
     return web.json_response(summary)
 
 
