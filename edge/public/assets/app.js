@@ -131,4 +131,23 @@ el.search.addEventListener('input', (e) => {
   renderGrid();
 });
 
+// Delegated click handler: open the HLS player modal on a plain
+// left-click of a channel card. Modifier-clicks (cmd/ctrl/shift),
+// middle-click, and right-click fall through to the existing
+// `/channel.html?id=N` navigation. Channels with no `token` (no
+// online streams) also fall through — the detail page is the right
+// place to show that.
+el.grid.addEventListener('click', (e) => {
+  const a = e.target.closest('a.channel-card');
+  if (!a) return;
+  if (e.button !== 0) return;        // middle / right click → browser default
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; // open in new tab
+  const id = parseInt(new URL(a.href, location.origin).searchParams.get('id'), 10);
+  if (!id) return;
+  const channel = state.catalog?.channels?.find((c) => c.id === id);
+  if (!channel || !channel.token || !window.TreefrogPlayer) return;
+  e.preventDefault();
+  window.TreefrogPlayer.open(channel);
+});
+
 loadCatalog();

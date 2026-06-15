@@ -38,6 +38,11 @@
                 }
                 document.title = `${channel.name} — Tree Frog Streams`;
                 const m3u = `/playlist.m3u`;
+                // No `token` means no online streams; render the
+                // button as disabled and relabel it. The delegated
+                // handler below is a safety net for race conditions
+                // (KV out of sync with catalog).
+                const canWatch = !!channel.token;
                 root.innerHTML = `
                     <div class="bg-gray-800 border border-gray-700 rounded-2xl overflow-hidden">
                         <div class="aspect-video bg-gray-900 flex items-center justify-center">
@@ -57,7 +62,11 @@
                                 ${channel.tvg_id ? `<span>·</span><span>tvg-id: <code class="text-xs bg-gray-900 px-2 py-0.5 rounded">${channel.tvg_id}</code></span>` : ''}
                             </div>
                             <div class="flex flex-wrap gap-3 mt-6">
-                                <a href="${m3u}" class="bg-frog hover:bg-green-500 text-gray-900 font-semibold px-5 py-3 rounded-lg transition-colors">
+                                <button id="btn-watch" type="button"${canWatch ? '' : ' disabled'}
+                                        class="bg-frog hover:bg-green-500 text-gray-900 font-semibold px-5 py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                    ${canWatch ? '▶ Watch now' : 'Stream offline'}
+                                </button>
+                                <a href="${m3u}" class="bg-gray-700 hover:bg-gray-600 text-white font-medium px-5 py-3 rounded-lg transition-colors">
                                     📥 Download playlist
                                 </a>
                                 <a href="/playlist.html" class="bg-gray-700 hover:bg-gray-600 text-white font-medium px-5 py-3 rounded-lg transition-colors">
@@ -79,7 +88,36 @@
                 root.innerHTML = '<div class="text-center text-red-400 py-16">Failed to load channel info.</div>';
             }
         }
+        // Watch-now button: open the HLS player modal. Disabled when
+        // the channel has no `token` (no online streams), and relabeled
+        // to "Stream offline" so the user knows why.
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('#btn-watch');
+            if (!btn) return;
+            if (btn.disabled) return;
+            const id = parseInt(new URL(location.href).searchParams.get('id'), 10);
+            // Re-fetch the catalog to get the live channel + token.
+            // Cheap: catalog is a single ~200KB KV read.
+            fetch('/api/channels.json', { cache: 'no-cache' })
+                .then((r) => r.json())
+                .then((cat) => {
+                    const ch = cat.channels.find((c) => c.id === id);
+                    if (!ch) return;
+                    if (!ch.token || !window.TreefrogPlayer) {
+                        btn.disabled = true;
+                        btn.textContent = 'Stream offline';
+                        return;
+                    }
+                    window.TreefrogPlayer.open(ch);
+                })
+                .catch((err) => {
+                    console.error('watch click failed', err);
+                    btn.disabled = true;
+                    btn.textContent = 'Player unavailable';
+                });
+        });
         load();
     </script>
+    <script src="/assets/player.js" defer></script>
 </body>
 </html>
