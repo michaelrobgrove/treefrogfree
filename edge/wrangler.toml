@@ -1,0 +1,35 @@
+# Tree Frog Streams — Cloudflare Worker
+#
+# Deploy:
+#   wrangler kv:namespace create STREAM_KV   (already done; id below)
+#   wrangler login
+#   wrangler deploy
+#
+# Static assets are bundled into the Worker via the [assets] config.
+# Dynamic routes (Worker code) handle /s/*, /api/*, and asset fallback.
+
+name = "treefrog-streams"
+main = "src/worker.ts"
+compatibility_date = "2024-09-23"
+
+# Bundles the public/ folder into the Worker. The handler in worker.ts
+# reads from env.ASSETS which is auto-injected when this is set.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+# KV namespace for stream-redirect lookups.
+[[kv_namespaces]]
+binding = "STREAM_KV"
+id = "0fc0537c9a5642c0a327679b16a05128"
+
+[vars]
+CACHE_TTL_CATALOG = "300"
+CACHE_TTL_PLAYLIST = "300"
+CACHE_TTL_STATIC = "3600"
+
+# Routes — uncomment once free.tfplus.stream is on Cloudflare.
+# routes = [
+#   { pattern = "free.tfplus.stream/*",       custom_domain = true },
+#   { pattern = "admin.free.tfplus.stream/*", custom_domain = true },
+# ]

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tree Frog Streams — Clean, reliable live TV</title>
+    <meta name="description" content="100% free, family-friendly live TV streams. Monitored every 30 minutes. Brought to you by Tree Frog.">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: { frog: '#22c55e' } } }
+        }
+    </script>
+    <link rel="icon" href="/assets/frog.svg" type="image/svg+xml">
+    <style>
+        body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+        .channel-card { transition: transform 120ms ease, border-color 120ms ease; }
+        .channel-card:hover { transform: translateY(-2px); }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen antialiased selection:bg-frog selection:text-white">
+
+    <nav class="border-b border-gray-800 bg-gray-900/80 backdrop-blur-md sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <a href="/" class="flex items-center gap-2">
+                <span class="text-2xl">🐸</span>
+                <span class="font-bold text-xl tracking-tight">Tree Frog <span class="text-frog">Streams</span></span>
+            </a>
+            <div class="flex items-center gap-3">
+                <a href="/playlist.html" class="text-sm text-gray-300 hover:text-white hidden sm:inline">Playlist</a>
+                <a href="https://tfplus.stream" class="text-sm text-gray-300 hover:text-white hidden sm:inline">Tree Frog Plus</a>
+                <a href="/playlist.m3u" class="bg-gray-800 hover:bg-gray-700 text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+                    Download M3U
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div class="text-center mb-12">
+            <h1 class="text-4xl md:text-5xl font-extrabold tracking-tight mb-4">Clean, reliable live TV.</h1>
+            <p class="text-gray-400 text-lg max-w-2xl mx-auto">100% free, family-friendly streams, monitored every 30 minutes for ultimate reliability.</p>
+        </div>
+
+        <!-- Stats -->
+        <div id="stats" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
+            <div class="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
+                <div class="text-3xl font-bold text-frog" id="stat-channel-count">—</div>
+                <div class="text-xs text-gray-400 mt-1">Working channels</div>
+            </div>
+            <div class="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
+                <div class="text-3xl font-bold text-frog" id="stat-availability">—</div>
+                <div class="text-xs text-gray-400 mt-1">Average uptime</div>
+            </div>
+            <div class="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
+                <div class="text-3xl font-bold text-frog" id="stat-categories">—</div>
+                <div class="text-xs text-gray-400 mt-1">Categories</div>
+            </div>
+            <div class="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
+                <div class="text-3xl font-bold text-frog">30m</div>
+                <div class="text-xs text-gray-400 mt-1">Health check interval</div>
+            </div>
+        </div>
+
+        <!-- Search -->
+        <div class="max-w-xl mx-auto mb-10">
+            <input id="search" type="text" placeholder="Search channels (e.g., PBS, Weather, ESPN)..."
+                   class="w-full bg-gray-800 border border-gray-700 rounded-xl px-5 py-4 text-white focus:outline-none focus:ring-2 focus:ring-frog transition-all placeholder-gray-500 shadow-lg">
+        </div>
+
+        <!-- Category filters -->
+        <div id="categories" class="flex flex-wrap gap-2 mb-8 justify-center"></div>
+
+        <!-- Channel grid -->
+        <div id="grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4"></div>
+
+        <div id="empty" class="hidden text-center text-gray-500 py-16">
+            <div class="text-5xl mb-3">🐸</div>
+            <p>No channels match your search.</p>
+        </div>
+
+        <!-- Plus CTA -->
+        <div class="mt-16 bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-2xl p-8 text-center">
+            <div class="text-3xl mb-2">🌟</div>
+            <h3 class="text-2xl font-bold mb-2">Want more?</h3>
+            <p class="text-gray-400 mb-4 max-w-xl mx-auto">More channels, better reliability, premium EPG and additional features — all in Tree Frog Plus.</p>
+            <a href="https://tfplus.stream" class="inline-block bg-frog hover:bg-green-500 text-gray-900 font-semibold px-6 py-3 rounded-lg transition-colors">
+                Visit TFPlus.stream →
+            </a>
+        </div>
+    </main>
+
+    <footer class="border-t border-gray-800 mt-16">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-sm text-gray-500 flex flex-col md:flex-row items-center justify-between gap-3">
+            <div>© Tree Frog Streams — A clean, deduplicated channel registry.</div>
+            <div id="last-updated" class="text-xs">—</div>
+        </div>
+    </footer>
+
+    <script src="/assets/app.js"></script>
+</body>
+</html>

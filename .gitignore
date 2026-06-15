@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.eggs/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Node
+node_modules/
+.pnpm-store/
+*.tsbuildinfo
+.wrangler/
+
+# Engine runtime
+engine/data/*.db
+engine/data/*.db-shm
+engine/data/*.db-wal
+engine/data/cache/
+engine/data/public/
+engine/data/epg/
+engine/logs/*.log
+engine/logs/*.jsonl
+
+# Secrets
+.env
+.env.local
+*.pem
+!docs/*.pem
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build output
+dist/
+build/
+*.egg

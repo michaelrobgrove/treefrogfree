@@ -1,0 +1,21 @@
+version: '3.8'
+
+# Hard resource caps so the engine coexists with AIOstreams on the same host.
+# See plan.md §12.1 for the reasoning.
+services:
+  tf-engine:
+    build: .
+    image: treefrog-engine:dev
+    container_name: treefrog-engine
+    restart: unless-stopped
+    cpus: 0.5                 # hard cap, AIOstreams must not be starved
+    mem_limit: 1g             # hard cap
+    mem_reservation: 512m     # guaranteed floor
+    pids_limit: 200           # fork-bomb guard
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    # The admin API is intentionally NOT exposed to the host network.
+    # Access goes via Tailscale or a Cloudflare Tunnel (see plan.md §11).
