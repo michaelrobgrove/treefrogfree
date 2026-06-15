@@ -5,17 +5,20 @@
  *   GET /s/<token>   → 302 redirect to the live source URL stored in KV.
  *                      1 KV read, no parsing, no Python, no DB.
  *
- * Static site:
+ * Public read path (served from KV, no engine needed at request time):
+ *   GET /api/channels.json  → KV.get("catalog:channels.json")
+ *   GET /playlist.m3u       → KV.get("catalog:playlist.m3u")
+ *
+ * Static site (served from the ASSETS binding):
  *   /                  → index.html
  *   /channel.html      → channel detail page
  *   /playlist.html     → playlist + setup guide
  *   /admin/            → admin SPA
  *   /assets/*          → JS, SVG
  *
- * The worker intentionally does NOT:
- *   - Proxy or restream (zero bandwidth cost).
- *   - Log full URLs (privacy + cost).
- *   - Run any business logic (consolidation, health checks, etc.).
+ * The admin UI talks to the engine directly over Tailscale (the engine
+ * binds to 127.0.0.1:8000 and is never reachable from the public internet).
+ * The Worker does not proxy any /api/* traffic.
  *
  * See plan.md §7 for the design rationale.
  */
@@ -28,9 +31,6 @@ export interface Env {
   CACHE_TTL_CATALOG: string;
   CACHE_TTL_PLAYLIST: string;
   CACHE_TTL_STATIC: string;
-  // Optional override; when unset we proxy /api/* to the same origin
-  // (which works once a Cloudflare Tunnel routes /api/* to the engine).
-  ENGINE_API_URL?: string;
 }
 
 async function serveStatic(
@@ -65,15 +65,16 @@ export default {
       return handleStreamRedirect(path, env);
     }
 
-    // ---- /api/*: pass through to the engine admin API
-    if (path.startsWith("/api/")) {
-      return handleApiProxy(request, url, env);
+    // ---- Public read path: served from KV, cached at the edge ----
+    if (path === "/api/channels.json") {
+      return handlePublicAsset("catalog:channels.json", "application/json; charset=utf-8", env);
+    }
+    if (path === "/playlist.m3u") {
+      return handlePublicAsset("catalog:playlist.m3u", "audio/x-mpegurl; charset=utf-8", env);
     }
 
     // ---- Static site ----
     return await serveStatic(request, env);
-
-    return new Response("Not found", { status: 404 });
   },
 } satisfies ExportedHandler<Env>;
 
@@ -110,33 +111,42 @@ async function handleStreamRedirect(path: string, env: Env): Promise<Response> {
 }
 
 /**
- * Proxy /api/* requests to the engine admin API.
- *
- * When ENGINE_API_URL is set (env var), we use it as the upstream.
- * Otherwise we use the request's own origin — this works when a
- * Cloudflare Tunnel routes /api/* traffic to the engine container.
+ * Serve a public read asset that the engine has pushed to KV. The engine
+ * writes these on every cycle (with diff-and-skip), so the Worker never
+ * needs to contact the engine at request time.
  */
-async function handleApiProxy(request: Request, url: URL, env: Env): Promise<Response> {
-  const upstream = env.ENGINE_API_URL || url.origin;
-  const target = new URL(url.pathname + url.search, upstream);
-  const init: RequestInit = {
-    method: request.method,
-    headers: request.headers,
-    body: request.body,
-    redirect: "follow",
-  };
-  try {
-    const resp = await fetch(target.toString(), init);
-    const headers = new Headers(resp.headers);
-    if (target.pathname === "/api/channels.json") {
-      headers.set("Cache-Control", `public, max-age=${env.CACHE_TTL_CATALOG ?? "300"}`);
-    } else if (target.pathname.endsWith(".m3u")) {
-      headers.set("Cache-Control", `public, max-age=${env.CACHE_TTL_PLAYLIST ?? "300"}`);
-    }
-    return new Response(resp.body, { status: resp.status, headers });
-  } catch (e) {
-    return new Response(`Upstream unavailable: ${(e as Error).message}`, { status: 502 });
+async function handlePublicAsset(
+  kvKey: string,
+  contentType: string,
+  env: Env,
+): Promise<Response> {
+  const value = await env.STREAM_KV.get(kvKey);
+  if (!value) {
+    return new Response(
+      "Not yet published. The engine writes this on its first cycle after a channel is discovered.",
+      {
+        status: 503,
+        headers: {
+          "Retry-After": "60",
+          "Cache-Control": "no-store",
+        },
+      },
+    );
   }
+  // Use the catalog TTL for JSON, playlist TTL for M3U. KV reads are
+  // uncached at the CF level for free-tier namespaces, so this header
+  // lets the browser cache between cycles.
+  const ttl = contentType.startsWith("application/json")
+    ? (env.CACHE_TTL_CATALOG ?? "300")
+    : (env.CACHE_TTL_PLAYLIST ?? "300");
+  return new Response(value, {
+    status: 200,
+    headers: {
+      "Content-Type": contentType,
+      "Cache-Control": `public, max-age=${ttl}`,
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
 }
 
 /**

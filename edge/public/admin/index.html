@@ -93,7 +93,16 @@
     </main>
 
     <script>
-        const ENGINE_API = '';  // same origin (Worker proxies /api/* to the engine via Tailscale)
+        // Engine API origin. The engine is admin-only and never proxied by the Worker
+        // (Worker can only read KV, can't reach the VPS). Set this to whatever can
+        // reach 127.0.0.1:8000 on the engine host:
+        //   - Tailscale IP (recommended for admin-only setups)
+        //   - Cloudflare Tunnel hostname (e.g. https://api.free.tfplus.stream)
+        //   - '' (same origin) only works if the Worker has a proxy to the engine
+        // Override per-deployment by editing the line below, or by injecting
+        //   <meta name="engine-api" content="..."> before this script.
+        const ENGINE_API = (document.querySelector('meta[name="engine-api"]')?.content)
+            || 'http://100.81.208.64:8000';   // <-- Tailscale IP of the AIO VPS
 
         async function api(path, opts = {}) {
             const resp = await fetch(ENGINE_API + path, {

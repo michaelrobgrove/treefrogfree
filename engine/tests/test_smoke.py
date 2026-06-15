@@ -29,6 +29,12 @@ os.environ["LOG_DIR"] = str(TMPDIR / "logs")
 os.environ["DB_PATH"] = str(TMPDIR / "treefrog.db")
 os.environ["HEALTH_TIMEOUT_SEC"] = "3"
 os.environ["HEALTH_CADENCE_SEC"] = "1800"
+# Fake CF credentials so the KV-publisher code path actually runs
+# (it bails early with "credentials missing" otherwise). The aiohttp
+# session is patched out below.
+os.environ["CF_API_TOKEN"] = "fake-token"
+os.environ["CF_ACCOUNT_ID"] = "fake-account"
+os.environ["CF_KV_NAMESPACE_ID"] = "fake-ns"
 
 # Force a fresh config load with the new env vars.
 import importlib
@@ -42,6 +48,8 @@ import engine.publisher.playlist
 importlib.reload(engine.publisher.playlist)
 import engine.publisher.json_catalog
 importlib.reload(engine.publisher.json_catalog)
+import engine.publisher.kv
+importlib.reload(engine.publisher.kv)
 import engine.importers.importer
 importlib.reload(engine.importers.importer)
 
@@ -50,6 +58,7 @@ from engine.importers.importer import import_m3u
 from engine.health import run_health_cycle
 from engine.publisher.playlist import write_playlist, render_playlist
 from engine.publisher.json_catalog import build_catalog
+from engine.publisher import kv as kv_pub
 
 
 # A real-shaped M3U the local server will serve. Three distinct channels,
@@ -196,6 +205,67 @@ async def run_smoke():
     cat_size = Path(c_path).stat().st_size
     assert cat_size > 0
     print(f"[smoke] ✓ artifacts on disk: {p_path} ({Path(p_path).stat().st_size}B), {c_path} ({cat_size}B)")
+
+    # ---- 7. publish_public_assets to KV (mocked) ----
+    # We don't need real CF credentials for this; the point is to prove
+    # the engine builds the right KV payload (catalog JSON + playlist
+    # M3U) and that diff-and-skip works on the second call.
+    print("\n[smoke] === Step 7: KV public-asset publish (mocked) ===")
+    captured: dict[str, str] = {}
+
+    class _FakeResp:
+        """Mirrors aiohttp's context-manager response object."""
+        def __init__(self, status: int, text: str = ""):
+            self.status = status
+            self._text = text
+        async def text(self): return self._text
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+
+    class _FakeSession:
+        """A session that records PUTs and serves known values on GETs.
+
+        The publisher uses `async with session.get(...) as resp` so each
+        verb needs to return a context-manager response, not be one itself.
+        """
+        def get(self, url, **kw):
+            key = url.rsplit("/", 1)[-1]
+            return _FakeResp(200, captured.get(key, ""))
+        def put(self, url, **kw):
+            key = url.rsplit("/", 1)[-1]
+            captured[key] = kw["data"]
+            return _FakeResp(200)
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+
+    # Patch the CF URL + session to use our fake
+    kv_pub._cf_url = lambda ns: "https://fake.test/kv/"
+    orig_session = kv_pub.aiohttp.ClientSession
+    kv_pub.aiohttp.ClientSession = lambda **kw: _FakeSession()
+
+    try:
+        # First publish: both keys are new
+        s1 = await kv_pub.publish_public_assets()
+        print(f"[smoke] first publish: {s1}")
+        assert s1["written"] == 2
+        assert s1["unchanged"] == 0
+        assert s1["errors"] == 0
+        assert "catalog:channels.json" in captured
+        assert "catalog:playlist.m3u" in captured
+        # The captured values must be valid JSON / valid M3U
+        parsed = json.loads(captured["catalog:channels.json"])
+        assert parsed["stats"]["channel_count"] == 4
+        assert captured["catalog:playlist.m3u"].startswith("#EXTM3U")
+
+        # Second publish: nothing changed, so both should be skipped
+        s2 = await kv_pub.publish_public_assets()
+        print(f"[smoke] second publish (no changes): {s2}")
+        assert s2["written"] == 0
+        assert s2["unchanged"] == 2
+        assert s2["errors"] == 0
+    finally:
+        kv_pub.aiohttp.ClientSession = orig_session
+    print("[smoke] ✓ KV public-asset publish (with diff-and-skip) works")
 
     await runner.cleanup()
     print("\n[smoke] ========== ALL SMOKE TESTS PASSED ==========\n")

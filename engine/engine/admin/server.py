@@ -46,7 +46,7 @@ from ..db import open_db, run_migrations
 from ..health import run_health_cycle
 from ..importers.importer import import_m3u
 from ..publisher.json_catalog import build_catalog, write_catalog
-from ..publisher.kv import publish_redirects
+from ..publisher.kv import publish_public_assets, publish_redirects
 from ..publisher.playlist import render_playlist, write_playlist
 from .epg import import_epg_url, render_epg_xml
 
@@ -227,12 +227,14 @@ async def handle_admin_check_once(_request: web.Request) -> web.Response:
 async def handle_admin_publish(_request: web.Request) -> web.Response:
     p = await write_playlist()
     c = await write_catalog()
-    return web.json_response({"playlist": p, "catalog": c})
+    pub = await publish_public_assets(force=True)
+    return web.json_response({"playlist": p, "catalog": c, "kv_public": pub})
 
 
 async def handle_admin_rebuild_kv(_request: web.Request) -> web.Response:
-    summary = await publish_redirects(force=True)
-    return web.json_response(summary)
+    redirects = await publish_redirects(force=True)
+    public = await publish_public_assets(force=True)
+    return web.json_response({"redirects": redirects, "public": public})
 
 
 async def handle_stream_recheck(request: web.Request) -> web.Response:

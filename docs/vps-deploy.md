@@ -30,8 +30,18 @@ You need:
 - ✅ A Cloudflare account with `tfplus.stream` added as a zone.
 - ✅ A VPS (your existing one with AIOstreams works — we cap the
   engine to 0.5 vCPU / 1 GB and AIOstreams is unaffected).
+- ✅ Tailscale (or any other private network) reachable from the
+  device(s) you'll use to access the admin UI.
 - ✅ Local access to `wrangler` (already configured: `wrangler whoami` works).
 - ✅ The KV namespace `STREAM_KV` (id `0fc0537c9a5642c0a327679b16a05128`).
+
+## Architecture (one-line version)
+
+The engine on the VPS writes **3 things to Cloudflare KV** every health
+cycle: per-channel redirect tokens, the public catalog JSON, and the
+public M3U playlist. The Worker reads them straight from KV — the
+engine **never** needs a public URL, the admin UI talks to the engine
+directly over Tailscale.
 
 ---
 
@@ -117,12 +127,11 @@ You should see:
 2. API server listening on `http://127.0.0.1:8000`.
 3. First health cycle: 0 streams checked (empty DB) → published empty playlist/catalog.
 
-### 2.3 Add a Tailscale or Cloudflare Tunnel for the admin API
+### 2.3 Tailscale (required for admin access)
 
-The admin API binds to `127.0.0.1:8000` — it's not exposed to the public
-internet. Pick ONE of these options for remote admin access:
-
-**Option A: Tailscale (recommended)**
+The admin API binds to `127.0.0.1:8000` and the admin UI talks to it
+directly from your browser. The Worker does **not** proxy `/api/*` —
+the engine has no public URL.
 
 ```bash
 # On the VPS:
@@ -132,55 +141,31 @@ sudo tailscale up
 ```
 
 You can now reach the admin API at `http://<vps-tailscale-ip>:8000`
-from any device on your Tailscale network.
+from any device on your Tailscale network. The admin UI is configured
+with that IP baked in (see `edge/public/admin/index.html`).
 
-**Option B: Cloudflare Tunnel**
-
-```bash
-# On the VPS:
-curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
-echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/cloudflared.list
-sudo apt update && sudo apt install -y cloudflared
-cloudflared tunnel login
-cloudflared tunnel create treefrog
-cloudflared tunnel route dns treefrog api.internal.tfplus.stream
-# Run as a service:
-sudo cloudflared service install
-sudo systemctl enable --now cloudflared
-```
-
-Configure the tunnel to point at the local API:
-
-```bash
-sudo tee /etc/cloudflared/config.yml >/dev/null <<EOF
-tunnel: <your-tunnel-id>
-credentials-file: /etc/cloudflared/<your-tunnel-id>.json
-
-ingress:
-  - hostname: api.internal.tfplus.stream
-    service: http://127.0.0.1:8000
-  - service: http_status:404
-EOF
-sudo systemctl restart cloudflared
-```
+> If you'd rather not bake in an IP, edit the `ENGINE_API` line in
+> `edge/public/admin/index.html` to your preferred hostname (Tailscale
+> MagicDNS, Cloudflare Tunnel hostname, etc.), then `npm run deploy`
+> from the `edge/` dir.
 
 ---
 
 ## 3. First data — import an M3U
 
 The engine has an empty DB at this point. The easiest way to populate
-it is to call the admin API from the VPS itself (via the local network
-or Tailscale):
+it is from your laptop (or any Tailscale device) hitting the admin
+API directly over Tailscale:
 
 ```bash
-# Locally on the VPS (uses the public admin endpoint via Tailscale IP):
-curl -X POST http://127.0.0.1:8000/api/admin/import \
+# From your laptop (replace with your VPS's Tailscale IP):
+curl -X POST http://100.81.208.64:8000/api/admin/import \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"url": "https://your-m3u-provider.com/list.m3u", "label": "My Source"}'
 ```
 
-Or from the CLI:
+Or from the VPS itself:
 
 ```bash
 cd /opt/treefrogfree/engine
@@ -197,8 +182,12 @@ The engine will:
 1. Download the M3U.
 2. Consolidate into unique channels.
 3. Run a health check on every stream (HEAD + manifest sniff).
-4. Write winners to Cloudflare KV.
-5. Render the playlist and catalog JSON.
+4. Write winners (one KV key per channel) to Cloudflare KV.
+5. Render the catalog and playlist, then push them to KV under
+   `catalog:channels.json` and `catalog:playlist.m3u`.
+
+After the cycle, visit `https://free.tfplus.stream/` — the public site
+reads everything from KV, no engine reachability needed.
 
 ---
 
@@ -310,6 +299,7 @@ crontab. Suggested:
 |---|---|
 | Worker returns 500 on `/` | Check `wrangler tail` for the exception. Most common: `ASSETS` binding missing — make sure `edge/wrangler.toml` has `[assets] directory = "./public"`. |
 | `/s/<token>` returns 410 | Token isn't in KV. Check engine logs: did `publish_redirects` run? Did the channel have any online stream? |
+| `/api/channels.json` or `/playlist.m3u` returns 503 | Engine hasn't published yet. Wait for the first health cycle. KV writes are eventually consistent — they may also take ~30s to propagate to all edge POPs. |
 | Engine health checks all fail | The VPS probably can't reach the source provider. Test from inside the container: `docker compose exec tf-engine curl -I https://example.com/test.m3u8`. |
-| Admin UI shows "Failed to load" | Engine API not reachable. Check Tailscale/Tunnel is up and the engine is listening on `127.0.0.1:8000`. |
+| Admin UI shows "Failed to load" | Engine API not reachable from your browser. Check Tailscale is up on both ends, the engine is listening on `127.0.0.1:8000`, and the `ENGINE_API` in `edge/public/admin/index.html` matches your VPS's Tailscale IP. |
 | KV writes are 403 | `CF_API_TOKEN` is wrong or doesn't have `Workers KV Storage: Edit` permission. |

@@ -10,6 +10,7 @@ Free tier limits: 100K reads/day, 1K writes/sec. We only write on
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Optional
 
@@ -77,6 +78,52 @@ async def _delete_kv(session: aiohttp.ClientSession, key: str) -> bool:
             return resp.status in (200, 204)
     except aiohttp.ClientError:
         return False
+
+
+async def publish_public_assets(*, force: bool = False) -> dict:
+    """Publish the public catalog and playlist to Cloudflare KV.
+
+    The Worker reads these from KV on every /api/channels.json and
+    /playlist.m3u request, so the engine never needs to be reachable
+    from the public internet — only the admin UI (over Tailscale) hits
+    the engine directly.
+
+    Keys written:
+        catalog:channels.json   — the public channel catalog (JSON)
+        catalog:playlist.m3u    — the public M3U playlist
+
+    Returns {written, unchanged, errors} for the two keys.
+    """
+    # Imported here to avoid a circular import at module load
+    # (json_catalog and playlist import config, which can import db).
+    from .json_catalog import build_catalog
+    from .playlist import render_playlist
+
+    catalog = await build_catalog()
+    playlist = await render_playlist()
+
+    catalog_json = json.dumps(catalog, separators=(",", ":"), ensure_ascii=False)
+    playlist_str = playlist  # already a string
+
+    written = unchanged = errors = 0
+    connector = aiohttp.TCPConnector(limit=5)
+    async with aiohttp.ClientSession(connector=connector) as session:
+        for key, value in (
+            ("catalog:channels.json", catalog_json),
+            ("catalog:playlist.m3u", playlist_str),
+        ):
+            if not force:
+                current = await _get_kv(session, key)
+                if current == value:
+                    unchanged += 1
+                    log.info("KV public asset %s unchanged (skip)", key)
+                    continue
+            if await _put_kv(session, key, value):
+                written += 1
+                log.info("KV public asset %s written (%d bytes)", key, len(value))
+            else:
+                errors += 1
+    return {"written": written, "unchanged": unchanged, "errors": errors}
 
 
 async def publish_redirects(*, force: bool = False) -> dict:

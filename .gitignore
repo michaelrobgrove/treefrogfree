@@ -33,6 +33,11 @@ engine/logs/*.jsonl
 .env.local
 *.pem
 !docs/*.pem
+# API tokens / credentials (defense in depth — never commit these)
+token.md
+*.token
+*credentials*
+*secrets*
 
 # OS / editor
 .DS_Store

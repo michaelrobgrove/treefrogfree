@@ -23,7 +23,7 @@ from .config import CONFIG
 from .db import open_db, run_migrations
 from .health import run_health_cycle
 from .publisher.json_catalog import write_catalog
-from .publisher.kv import publish_redirects
+from .publisher.kv import publish_public_assets, publish_redirects
 from .publisher.playlist import write_playlist
 
 log = logging.getLogger("treefrog.scheduler")
@@ -61,6 +61,15 @@ async def _tick() -> None:
         log.info("KV publish: %s", kv_summary)
     except Exception:
         log.exception("KV publish failed; continuing")
+
+    # Public read path. The Worker serves /api/channels.json and
+    # /playlist.m3u straight from KV, so the engine never needs to be
+    # publicly reachable.
+    try:
+        pub_summary = await publish_public_assets()
+        log.info("KV public assets: %s", pub_summary)
+    except Exception:
+        log.exception("KV public assets publish failed; continuing")
 
     # EPG refresh (every 6h, see plan.md §10.1). Cheap to do on every cycle
     # since we re-import only if cache is stale — but for now skip the

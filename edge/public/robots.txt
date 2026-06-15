@@ -1,4 +1,6 @@
 User-agent: *
 Allow: /
 Disallow: /s/
-Disallow: /api/
+# /api/channels.json and /playlist.m3u are public; explicitly allow them.
+Allow: /api/channels.json
+Allow: /playlist.m3u
