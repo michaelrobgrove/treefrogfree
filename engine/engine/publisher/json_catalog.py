@@ -41,7 +41,7 @@ import logging
 from datetime import datetime, timezone
 
 from ..config import CONFIG
-from ..consolidator import group_brand_name, group_slug
+from ..consolidator import canonical_category, group_brand_name, group_slug
 from ..db import open_db
 
 log = logging.getLogger("treefrog.catalog")
@@ -79,6 +79,37 @@ async def build_catalog() -> dict:
         ) as cur:
             groups = await cur.fetchall()
 
+        # Coalesce the raw group_title (often 70+ distinct values
+        # from a free M3U) into the canonical ~15-20 the UI actually
+        # shows. The canonical name drives both the categories list
+        # display and the per-channel `category` slug, so two raw
+        # M3U titles like "Animation Classics" and "Animation Kids"
+        # both surface as the "Animation" pill.
+        canonical_groups: dict[str, dict] = {}  # canonical_name -> {n, avail_sum, avail_n, last_check}
+        for g in groups:
+            canon = canonical_category(g["group_title"])
+            bucket = canonical_groups.setdefault(
+                canon,
+                {"n": 0, "avail_sum": 0.0, "avail_n": 0, "last_check": "1970-01-01T00:00:00Z"},
+            )
+            bucket["n"] += int(g["n"])
+            if g["avg_avail"] is not None:
+                bucket["avail_sum"] += float(g["avg_avail"]) * int(g["n"])
+                bucket["avail_n"] += int(g["n"])
+            if g["last_check"] and g["last_check"] > bucket["last_check"]:
+                bucket["last_check"] = g["last_check"]
+        # Reshape into the dict shape the rest of the function expects.
+        merged_groups = [
+            {
+                "canonical": canon,
+                "n": data["n"],
+                "avg_avail": (data["avail_sum"] / data["avail_n"]) if data["avail_n"] else None,
+                "last_check": data["last_check"],
+            }
+            for canon, data in canonical_groups.items()
+        ]
+        groups = merged_groups
+
         last_check = "1970-01-01T00:00:00Z"
         total_avail = 0.0
         n_avail = 0
@@ -99,8 +130,8 @@ async def build_catalog() -> dict:
         categories = sorted(
             [
                 {
-                    "name": group_brand_name(g["group_title"]),
-                    "slug": group_slug(g["group_title"]),
+                    "name": group_brand_name(g["canonical"]),
+                    "slug": group_slug(g["canonical"]),
                     "count": int(g["n"]),
                 }
                 for g in groups
@@ -108,11 +139,16 @@ async def build_catalog() -> dict:
             key=lambda c: c["name"],
         )
 
+        # Per-channel `category` is the canonical slug, not the raw
+        # group_title. This is what the grid's category filter
+        # matches against, so two channels from different raw M3U
+        # groups ("Animation Classics" + "Animation Kids") both
+        # surface under the "animation" filter pill.
         out_channels = [
             {
                 "id": int(c["id"]),
                 "name": c["display_name"],
-                "category": group_slug(c["group_title"]),
+                "category": group_slug(canonical_category(c["group_title"])),
                 "logo": c["logo_url"],
                 "availability_pct": round(float(c["availability_pct"] or 0), 1),
                 "tvg_id": c["tvg_id"],

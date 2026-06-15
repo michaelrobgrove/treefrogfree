@@ -115,6 +115,105 @@ def group_brand_name(group: str) -> str:
     return f"🐸 Tree Frog Free | {g}"
 
 
+# ── Category canonicalization ──────────────────────────────────────────
+# Free M3U sources have wildly inconsistent group titles. "Animation",
+# "Animation Classics", "Animation Kids", "Animación", "Cartoons", and
+# "Kids" all mean roughly the same thing. Without consolidation, the
+# public site shows 81 categories, half with 1-2 channels — useless
+# for navigation.
+#
+# This map collapses known variants to a canonical display name. The
+# key match is a normalized substring; e.g. "animation classics" maps
+# to "Animation". The list is intentionally conservative — anything
+# we don't recognize falls through to its raw group_title (so a new
+# M3U source can still surface new categories).
+#
+# To add a consolidation, append a tuple (needle, canonical) where
+# `needle` is a substring of normalize(group_title). The first
+# matching needle wins; keep more specific needles above general ones.
+_CATEGORY_CANONICAL: tuple[tuple[str, str], ...] = (
+    # ── Animation & kids ──
+    ("animacion", "Animation"),
+    ("animation", "Animation"),
+    ("cartoon", "Animation"),
+    ("kids", "Kids"),
+    ("children", "Kids"),
+    ("preschool", "Kids"),
+    # ── News ──
+    ("news", "News"),
+    ("noticias", "News"),
+    # ── Sports ──
+    ("sport", "Sports"),
+    ("deportes", "Sports"),
+    # ── Movies & series ──
+    ("movie", "Movies"),
+    ("peliculas", "Movies"),
+    ("cinema", "Movies"),
+    ("series", "Series"),
+    ("tv show", "Series"),
+    # ── Music ──
+    ("music", "Music"),
+    ("musica", "Music"),
+    ("radio", "Music"),
+    # ── Documentary & education ──
+    ("documentary", "Documentary"),
+    ("documental", "Documentary"),
+    ("education", "Education"),
+    ("educacion", "Education"),
+    # ── Religious ──
+    ("religion", "Religious"),
+    ("religious", "Religious"),
+    ("cristiana", "Religious"),
+    ("islam", "Religious"),
+    # ── Lifestyle & cooking ──
+    ("cooking", "Lifestyle"),
+    ("food", "Lifestyle"),
+    ("travel", "Lifestyle"),
+    ("lifestyle", "Lifestyle"),
+    ("fashion", "Lifestyle"),
+    # ── Nature & science ──
+    ("nature", "Nature"),
+    ("science", "Science"),
+    ("naturaleza", "Nature"),
+    # ── Weather ──
+    ("weather", "Weather"),
+    ("clima", "Weather"),
+    # ── General entertainment ──
+    ("entertainment", "Entertainment"),
+    ("entretenimiento", "Entertainment"),
+    ("variety", "Entertainment"),
+    # ── Classic TV ──
+    ("classic", "Classic TV"),
+    ("retro", "Classic TV"),
+    # ── Shop / infomercial ──
+    ("shop", "Shopping"),
+    ("shopping", "Shopping"),
+    ("infomercial", "Shopping"),
+    # ── Local / regional ──
+    ("local", "Local"),
+    ("regional", "Local"),
+)
+
+
+def canonical_category(group_title: str) -> str:
+    """Map a raw M3U group_title to a canonical display name.
+
+    Returns the input (stripped) if no rule matches. The slug
+    helper downstream handles the URL-safe form.
+    """
+    g = (group_title or "").strip()
+    if not g:
+        return "Other"
+    n = normalize(g)
+    if not n:
+        return "Other"
+    for needle, canonical in _CATEGORY_CANONICAL:
+        if needle in n:
+            return canonical
+    # No rule matched — return the original (capitalized for display).
+    return g
+
+
 def candidate_matches(
     query: str, candidates: Iterable[str], limit: int = 20
 ) -> list[tuple[str, int]]:

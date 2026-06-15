@@ -6,11 +6,12 @@ collapse into one. The boundary is in normalize(); everything else hangs
 off of it.
 """
 from engine.consolidator import (
-    normalize,
-    is_same_channel,
-    group_slug,
-    group_brand_name,
+    canonical_category,
     candidate_matches,
+    group_brand_name,
+    group_slug,
+    is_same_channel,
+    normalize,
 )
 
 
@@ -136,3 +137,90 @@ class TestCandidateMatches:
         cands = [f"CNN HD {i}" for i in range(50)]
         results = candidate_matches("CNN", cands, limit=5)
         assert len(results) == 5
+
+
+class TestCanonicalCategory:
+    """The 81-category problem: free M3U sources have wildly
+    inconsistent group titles. The canonical_category helper
+    collapses known variants (Animation, Animation Classics,
+    Animation Kids) into a single canonical name (Animation) so
+    the public site's category filter shows ~15-20 useful pills
+    instead of 81 near-empty ones."""
+
+    def test_animation_variants_collapse(self):
+        assert canonical_category("Animation") == "Animation"
+        assert canonical_category("Animation Classics") == "Animation"
+        assert canonical_category("Animation Kids") == "Animation"
+        assert canonical_category("Animación") == "Animation"  # Spanish
+        assert canonical_category("Cartoons") == "Animation"
+
+    def test_kids_is_distinct_from_animation(self):
+        # "Kids" is its own canonical — we don't want every kids
+        # channel under the Animation pill. But the order matters:
+        # "Animation Kids" must hit Animation first, not Kids.
+        assert canonical_category("Kids") == "Kids"
+        assert canonical_category("Children") == "Kids"
+        assert canonical_category("Preschool") == "Kids"
+        assert canonical_category("Animation Kids") == "Animation"
+
+    def test_news_variants_collapse(self):
+        assert canonical_category("News") == "News"
+        assert canonical_category("Noticias") == "News"
+        assert canonical_category("US News") == "News"
+        assert canonical_category("Local News HD") == "News"
+
+    def test_sports_variants_collapse(self):
+        assert canonical_category("Sports") == "Sports"
+        assert canonical_category("Sport") == "Sports"
+        assert canonical_category("Deportes") == "Sports"
+        assert canonical_category("Sports HD") == "Sports"
+
+    def test_movies_and_series_split(self):
+        # Movies and series are distinct — combining them would
+        # make the Movies pill too big to be useful as a filter.
+        assert canonical_category("Movies") == "Movies"
+        assert canonical_category("Peliculas") == "Movies"
+        assert canonical_category("Series") == "Series"
+        assert canonical_category("TV Shows") == "Series"
+
+    def test_music_includes_radio(self):
+        # Many M3Us lump radio streams under "Music". Combine them
+        # so the Music pill surfaces audio-only streams.
+        assert canonical_category("Music") == "Music"
+        assert canonical_category("Música") == "Music"
+        assert canonical_category("Radio") == "Music"
+
+    def test_unknown_category_falls_through(self):
+        # A new M3U source can introduce categories we don't know
+        # about. The helper should return the original string (not
+        # crash, not return "Other") so the UI still shows the pill.
+        assert canonical_category("Astrology") == "Astrology"
+        assert canonical_category("Bicycle Racing") == "Bicycle Racing"
+
+    def test_empty_and_none_like(self):
+        assert canonical_category("") == "Other"
+        assert canonical_category("   ") == "Other"
+        assert canonical_category(None) == "Other"  # type: ignore[arg-type]
+
+    def test_case_insensitive(self):
+        assert canonical_category("ANIMATION") == "Animation"
+        assert canonical_category("animation CLASSICS") == "Animation"
+        assert canonical_category("kids") == "Kids"
+
+    def test_punctuation_dropped_before_match(self):
+        # The match is against the normalized form, so punctuation
+        # never blocks a canonicalization. "24/7" → "247" (digits
+        # kept) so the News needle still matches.
+        assert canonical_category("24/7 News") == "News"
+        assert canonical_category("Action & Adventure") == "Action & Adventure"  # falls through cleanly
+        # The helper never raises on weird punctuation.
+        canonical_category("*** weird !!! group ???")
+
+    def test_slugs_round_trip_through_group_slug(self):
+        # The catalog uses group_slug(canonical_category(...)) for
+        # the per-channel `category` field and the categories list
+        # `slug` field. Make sure the pipeline yields a consistent
+        # URL-safe slug.
+        from engine.consolidator import group_slug
+        assert group_slug(canonical_category("Animation Classics")) == "animation"
+        assert group_slug(canonical_category("Local News")) == "news"
