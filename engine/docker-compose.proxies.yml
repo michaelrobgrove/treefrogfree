@@ -1,4 +1,4 @@
-# Tree Frog Streams — Optional proxy stack (Cabernet + Pluto + Samsung + DistroTV)
+# Tree Frog Streams — Optional proxy stack (Samsung + Pluto + DistroTV + Cabernet)
 #
 # These four containers are *not* required for the engine to work —
 # they're a one-shot path to ~500 additional "free" channels sourced
@@ -22,91 +22,27 @@
 # single place to police CPU/memory.
 #
 # Bring this up with:
-#   cd /opt/treefrogfree/engine
-#   docker compose -f docker-compose.yml        up -d        # engine
-#   docker compose -f docker-compose.proxies.yml up -d       # proxies
+#   cd /opt/treefrogfree
+#   docker compose -f engine/docker-compose.yml        up -d        # engine
+#   docker compose -f engine/docker-compose.proxies.yml up -d       # proxies
 #
-# The two compose files are independent: this one has no dependency
-# on the engine container, only on the engine's TCP port 8000 being
-# reachable from the host (which it is, both being on host network).
+# See docs/proxy-stack.md for the per-proxy setup steps, auth
+# requirements, and the import commands.
 
 services:
   # ──────────────────────────────────────────────────────────────────
-  # 1. Samsung TV Plus for Channels (matthuisman/samsung-tvplus-for-channels)
-  #    https://github.com/matthuisman/samsung-tvplus-for-channels
-  # ──────────────────────────────────────────────────────────────────
-  # ~400 ad-supported "Samsung TV Plus" channels, hosted by Samsung.
-  # This container wraps them as a Channels DVR–compatible backend
-  # and exposes:
-  #     http://<host>:80/devices/ANY/channels.m3u
-  #     http://<host>:80/devices/ANY/xmltv.xml
-  # The engine imports those URLs the same way it imports any
-  # other M3U/XMLTV source. Widevine DRM streams are filtered out
-  # automatically, so what reaches the engine is HLS — which our
-  # HLS player handles natively.
-  samsung-tvplus:
-    image: matthuisman/samsung-tvplus-for-channels:latest
-    container_name: tf-samsung-tvplus
-    restart: unless-stopped
-    # Container runs a lightweight webserver on :80; no DB, no
-    # stateful disk beyond /config.
-    network_mode: host
-    volumes:
-      - ./data/samsung-tvplus:/config
-    # Resource caps sized for a server-side stream list + icon
-    # cache. Samsung's API is HTTPS JSON polling — CPU bound, not
-    # memory bound.
-    cpus: 0.25
-    mem_limit: 256m
-    mem_reservation: 128m
-    pids_limit: 100
-
-  # ──────────────────────────────────────────────────────────────────
-  # 2. Pluto for Channels (jonmaddox/pluto-for-channels)
-  #    https://github.com/jonmaddox/pluto-for-channels
-  # ──────────────────────────────────────────────────────────────────
-  # Mirrors the same idea for Pluto TV. ~250 free, ad-supported
-  # channels, exposed as:
-  #     http://<host>:8080/m3u/channels.m3u
-  #     http://<host>:8080/xmltv.xml
-  # Auth (optional — the free tier works without it, but the
-  # regional unlock is nice if you have an account) is configured
-  # via PLUTO_USERNAME / PLUTO_PASSWORD. The container reads those
-  # from /config/pluto.json on first boot, which we'll seed in the
-  # README below.
-  pluto-for-channels:
-    image: jonmaddox/pluto-for-channels:latest
-    container_name: tf-pluto-for-channels
-    restart: unless-stopped
-    network_mode: host
-    volumes:
-      - ./data/pluto-for-channels:/config
-    cpus: 0.25
-    mem_limit: 256m
-    mem_reservation: 128m
-    pids_limit: 100
-    environment:
-      # The Channels DVR emulation mode. "docker" is the right
-      # value when running standalone (not as a plugin inside
-      # Channels DVR). The default in the upstream image is
-      # already this, but pinning it makes the intent obvious.
-      - MODE=docker
-      # Uncomment the next two lines if you have a Pluto account
-      # and want the regional unlocks (US East, US West, etc.).
-      # Generate a random 16-byte password for safety:
-      #   openssl rand -hex 16
-      # - PLUTO_USERNAME_FILE=/secrets/pluto_user
-      # - PLUTO_PASSWORD_FILE=/secrets/pluto_password
-
-  # ──────────────────────────────────────────────────────────────────
-  # 3. DistroTV Proxy (ghcr.io/kineticman/distrotv-proxy)
+  # 1. DistroTV Proxy (ghcr.io/kineticman/distrotv-proxy)
   #    https://github.com/kineticman/DistroTV-Proxy
   # ──────────────────────────────────────────────────────────────────
-  # ~150 free channels from DistroTV. Exposes:
-  #     http://<host>:8787/playlist.m3u
-  #     http://<host>:8787/xmltv.xml
-  # The smallest and simplest of the four — no auth, no DB, just
-  # a static proxy in front of DistroTV's CDN.
+  # Start with this one — it's the simplest (no auth, no DB, no
+  # admin UI) and the easiest to verify. ~150 free channels from
+  # DistroTV, served from a Python BaseHTTP listener.
+  #
+  # M3U path:  http://<host>:8787/playlist.m3u
+  # XMLTV:     none (DistroTV doesn't publish a guide)
+  #
+  # The image only implements `GET`, so `curl -I` returns 501. Use
+  # `curl -s` (GET) instead when verifying. See proxy-stack.md §1.
   distrotv-proxy:
     image: ghcr.io/kineticman/distrotv-proxy:latest
     container_name: tf-distrotv-proxy
@@ -120,21 +56,86 @@ services:
     pids_limit: 100
 
   # ──────────────────────────────────────────────────────────────────
+  # 2. Samsung TV Plus for Channels (matthuisman/samsung-tvplus-for-channels)
+  #    https://github.com/matthuisman/samsung-tvplus-for-channels
+  # ──────────────────────────────────────────────────────────────────
+  # ~400 ad-supported "Samsung TV Plus" channels. Channels DVR–compat
+  # backend, so the URL shape is `/tuner-N-playlist.m3u` + `/epg.xml`.
+  #
+  # The image binds a non-default port — DON'T assume 80. Probe with
+  # `curl -s http://<host>:<PORT>/` and look for the index page that
+  # lists "tuner-1-playlist.m3u" through "tuner-12-playlist.m3u".
+  # (On the operator's host Samsung ended up on port 3000.) See
+  # proxy-stack.md §2.
+  samsung-tvplus:
+    image: matthuisman/samsung-tvplus-for-channels:latest
+    container_name: tf-samsung-tvplus
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./data/samsung-tvplus:/config
+    cpus: 0.25
+    mem_limit: 256m
+    mem_reservation: 128m
+    pids_limit: 100
+
+  # ──────────────────────────────────────────────────────────────────
+  # 3. Pluto for Channels (jonmaddox/pluto-for-channels)
+  #    https://github.com/jonmaddox/pluto-for-channels
+  # ──────────────────────────────────────────────────────────────────
+  # ~250 free, ad-supported channels. Like Samsung, it's a matthuisman
+  # Channels DVR server (nginx + uvicorn), so the URL shape is
+  # `/tuner-1-playlist.m3u` + `/epg.xml` on port 80. **It will not
+  # serve any M3U until PLUTO_USERNAME + PLUTO_PASSWORD are
+  # configured** — the image errors out at startup without them. See
+  # proxy-stack.md §3 for the creds setup.
+  #
+  # The `${VAR}_FILE` env pattern below matches how the main
+  # engine compose reads CF_API_TOKEN_FILE / ADMIN_TOKEN_FILE. Put
+  # the real values in /root/.secrets/pluto_user and pluto_password
+  # (chmod 600); do NOT inline them in this file.
+  pluto-for-channels:
+    image: jonmaddox/pluto-for-channels:latest
+    container_name: tf-pluto-for-channels
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./data/pluto-for-channels:/config
+      # Same _FILE pattern as docker-compose.yml: the host's secrets
+      # dir is bind-mounted read-only into the container, and the
+      # *FILE env vars point at the in-container paths. The values
+      # are loaded from /root/.secrets/{pluto_user,pluto_password}.
+      - /root/.secrets:/secrets:ro
+    cpus: 0.25
+    mem_limit: 256m
+    mem_reservation: 128m
+    pids_limit: 100
+    environment:
+      # Channels DVR emulation mode. The upstream image already
+      # defaults to this when run standalone, but pinning it makes
+      # the intent obvious.
+      - MODE=docker
+      # REQUIRED: a free Pluto account (any email, no card needed)
+      # at https://pluto.tv/. Drop the creds in token files on the
+      # host (chmod 600), not inline here.
+      - PLUTO_USERNAME_FILE=/secrets/pluto_user
+      - PLUTO_PASSWORD_FILE=/secrets/pluto_password
+
+  # ──────────────────────────────────────────────────────────────────
   # 4. Cabernet (ghcr.io/cabernetwork/cabernet)
   #    https://github.com/cabernetwork/cabernet
   # ──────────────────────────────────────────────────────────────────
-  # The "all-in-one master". Cabernet is a plugin-based bridge that
-  # turns free linear-stream sources (Pluto, Xumo, Plex, Stirr,
-  # Local Now, …) plus custom M3U/XMLTV feeds into a single
-  # Channels DVR–compatible HTTP endpoint:
-  #     http://<host>:6077/...channels.m3u
-  #     http://<host>:6077/...xmltv.xml
-  # The reason to add it on top of the per-source proxies above is
-  # the **plugin ecosystem**: it normalizes 30+ sources (Pluto
-  # alone via 5 regional plugins, plus Xumo, Plex, Rlaxx, LG,
-  # Samsung via TV Everywhere, …) and dedupes by channel name +
-  # region. The result is the cleanest "single M3U to import"
-  # of the bunch.
+  # The "all-in-one master". Plugin-based bridge that turns free
+  # linear-stream sources (Pluto, Xumo, Plex, Stirr, Local Now, …)
+  # plus custom M3U/XMLTV feeds into a single Channels DVR–
+  # compatible HTTP endpoint. The reason to add it on top of the
+  # per-source proxies is the **plugin ecosystem**: it normalizes
+  # 30+ sources and dedupes by channel name + region.
+  #
+  # Cab's admin UI at http://<host>:6077/ must be opened in a
+  # browser once on first boot to set the admin password and pick
+  # which plugins to enable. Until that's done, /m3u/channels.m3u
+  # returns an 8-byte stub. See proxy-stack.md §4.
   #
   # Cab needs more memory than the other three — the plugin
   # loaders cache EPG XMLTV and channel lists in process.
@@ -150,7 +151,7 @@ services:
     mem_reservation: 256m
     pids_limit: 200
     environment:
-      # Cab's "instance name" appears in the M3U headers and
-      # shows up in the admin UI. Pick a stable string here so
-      # imports identify the source reliably.
+      # Cab's "instance name" appears in the M3U headers and shows
+      # up in the admin UI. Pick a stable string here so imports
+      # identify the source reliably.
       - CAB_INSTANCE_NAME=TreeFrog
