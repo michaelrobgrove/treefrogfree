@@ -1,24 +1,27 @@
-# Tree Frog Streams — Optional proxy stack (Samsung + DistroTV + Cabernet)
+# Tree Frog Streams — Optional proxy stack (DistroTV + Samsung + Pluto)
 #
-# These containers are *not* required for the engine to work —
-# they're a one-shot path to ~700 additional "free" channels sourced
-# from Samsung TV Plus, DistroTV, and (via Cabernet) Xumo / Plex /
-# Pluto / custom M3U/XMLTV feeds. They run alongside tf-engine and
-# publish M3U+XMLTV endpoints that the engine imports the same way it
-# imports any other playlist.
+# Three free, ad-supported IPTV source proxies that sit alongside
+# tf-engine to add ~600 channels. They publish M3U+XMLTV endpoints
+# the engine imports the same way it imports any other playlist.
+#
+# Xumo is NOT a container — there's no maintained standalone
+# Xumo-for-channels image. The Xumo M3U is imported directly as
+# a remote URL (see docs/proxy-stack.md §5). The repo's reference
+# generator lives at:
+#   https://github.com/BuddyChewChew/xumo-playlist-generator
 #
 # Architecture:
 #   ┌─────────────────┐   m3u+xmltv    ┌──────────┐    m3u+xmltv     ┌──────────────┐
 #   │ samsung-tvplus  │ ─────────────▶ │          │ ────────────────▶│   Worker     │
-#   │ distrotv-proxy  │                │ tf-engine│   KV catalog     │ free.tfplus. │
-#   │ cabernet        │ ─────────────▶ │ 8000     │   KV playlist    │    stream    │
+#   │ pluto-for-chans │                │ tf-engine│   KV catalog     │ free.tfplus. │
+#   │ distrotv-proxy  │ ─────────────▶ │ 8000     │   KV playlist    │    stream    │
 #   └─────────────────┘                └──────────┘                  └──────────────┘
 #
-# All three bind via `network_mode: host` because (a) they don't need
-# isolation between each other and the engine, (b) M3U/EPG endpoints
-# are friendlier to type as localhost:PORT than as docker-network IPs,
-# and (c) the resource caps below make the host kernel the
-# single place to police CPU/memory.
+# All three bind via `network_mode: host` because (a) they don't
+# need isolation between each other and the engine, (b) M3U/EPG
+# endpoints are friendlier to type as localhost:PORT than as
+# docker-network IPs, and (c) the resource caps below make the
+# host kernel the single place to police CPU/memory.
 #
 # Bring this up with:
 #   cd /opt/treefrogfree
@@ -30,24 +33,19 @@
 #
 # ── Port allocation on the host (DO NOT change without reading this) ──
 #
-#   80        — Pluto for Channels' *preferred* port. (NOT in this
-#               file; Pluto was dropped in favor of Cab's Pluto
-#               plugin. See proxy-stack.md §3.)
+#   80        — Pluto for Channels (this file; image default).
 #   3000      — **AIOstreams** (operator's most important service).
-#               RESERVED. Do not bind anything here. Do not curl
+#               RESERVED. Never bind a container here, never curl
 #               127.0.0.1:3000 as a diagnostic for any proxy.
-#   3001      — Samsung TV Plus (this file).
-#   6077      — Cabernet (this file).
+#   3001      — Samsung TV Plus (this file; pinned via PORT=3001).
 #   8000      — Tree Frog engine (docker-compose.yml).
 #   8787      — DistroTV Proxy (this file).
 #   50005     — SSH (already running on the host; never bind here).
 #
-# The matthuisman channels-dvr images (Samsung, the original
-# Pluto-for-Channels) all default to port 80 — only one can hold
-# that port at a time. Pluto is dropped in favor of Cab's Pluto
-# plugin, so Samsung gets port 80 cleanly. But to keep the
-# AIOstreams reservation crystal clear, we also pin Samsung to
-# 3001 via the PORT env var (which the matthuisman image honors).
+# The matthuisman channels-dvr image used by Pluto defaults to port
+# 80. Samsung also defaults to 80, so we pin Samsung to 3001 via the
+# PORT env var to avoid a collision (and to keep AIOstreams on 3000
+# untouched).
 
 services:
   # ──────────────────────────────────────────────────────────────────
@@ -81,12 +79,12 @@ services:
   # ──────────────────────────────────────────────────────────────────
   # ~400 ad-supported "Samsung TV Plus" channels. Channels DVR–compat
   # backend, so the URL shape is `/tuner-N-playlist.m3u` + `/epg.xml`.
+  # Widevine DRM streams are filtered out — only HLS reaches the
+  # engine, which our player handles natively.
   #
   # The matthuisman image defaults to port 80. We pin it to 3001
-  # via the PORT env var to:
-  #   1. keep AIOstreams (port 3000) untouched
-  #   2. avoid collision with the (now-dropped) Pluto container
-  #   3. leave room for any future matthuisman image at port 80
+  # via the PORT env var to avoid a collision with Pluto (also
+  # port 80) and to keep AIOstreams (port 3000) untouched.
   #
   # M3U path:  http://<host>:3001/tuner-1-playlist.m3u
   # XMLTV:     http://<host>:3001/epg.xml
@@ -106,44 +104,46 @@ services:
       - PORT=3001
 
   # ──────────────────────────────────────────────────────────────────
-  # 3. Cabernet (ghcr.io/cabernetwork/cabernet)
-  #    https://github.com/cabernetwork/cabernet
+  # 3. Pluto for Channels (jonmaddox/pluto-for-channels)
+  #    https://github.com/jonmaddox/pluto-for-channels
   # ──────────────────────────────────────────────────────────────────
-  # The "all-in-one master". Plugin-based bridge that turns free
-  # linear-stream sources (Pluto, Xumo, Plex, Stirr, Local Now, …)
-  # plus custom M3U/XMLTV feeds into a single Channels DVR–
-  # compatible HTTP endpoint. The reason to add it on top of the
-  # per-source proxies is the **plugin ecosystem**: it normalizes
-  # 30+ sources and dedupes by channel name + region.
+  # ~250 free, ad-supported channels from Pluto TV. Matthuisman
+  # channels-dvr style (nginx + uvicorn), so the URL shape is
+  # `/tuner-1-playlist.m3u` + `/epg.xml` on port 80.
   #
-  # **Cab subsumes Pluto** — Cab's "Pluto" plugin (under
-  # Settings → Plugins) pulls from the same Pluto API the
-  # standalone `jonmaddox/pluto-for-channels` container would,
-  # but the source-cred lifecycle is handled in one place and
-  # dedup happens across all enabled plugins. We don't run the
-  # standalone Pluto container in this stack to avoid the
-  # double-pull.
+  # **Auth quirk:** this image's `entrypoint.sh` reads
+  # PLUTO_USERNAME and PLUTO_PASSWORD *directly* from the env, NOT
+  # via the ${VAR}_FILE pattern used elsewhere. The image will not
+  # start without those env vars set. To keep the creds out of
+  # the compose file, we read them from engine/.env (chmod 600,
+  # gitignored) using Compose's variable interpolation:
   #
-  # Cab's admin UI at http://<host>:6077/ must be opened in a
-  # browser once on first boot to set the admin password and pick
-  # which plugins to enable. Until that's done, /m3u/channels.m3u
-  # returns an 8-byte stub. See proxy-stack.md §4.
+  #   In engine/.env:
+  #     PLUTO_USERNAME=your-pluto-email
+  #     PLUTO_PASSWORD=your-pluto-password
   #
-  # Cab needs more memory than the other two — the plugin
-  # loaders cache EPG XMLTV and channel lists in process.
-  cabernet:
-    image: ghcr.io/cabernetwork/cabernet:latest
-    container_name: tf-cabernet
+  # The compose file references ${PLUTO_USERNAME} / ${PLUTO_PASSWORD}
+  # so the actual values are never written to disk in a tracked
+  # file. The values DO show up in `docker inspect` on the host
+  # (this is unavoidable with this image) — keep engine/.env
+  # chmod 600 and limit who can SSH in.
+  pluto-for-channels:
+    image: jonmaddox/pluto-for-channels:latest
+    container_name: tf-pluto-for-channels
     restart: unless-stopped
     network_mode: host
     volumes:
-      - ./data/cabernet:/config
-    cpus: 0.5
-    mem_limit: 768m
-    mem_reservation: 256m
-    pids_limit: 200
+      - ./data/pluto-for-channels:/config
+    # Load .env at the file level so ${PLUTO_USERNAME} /
+    # ${PLUTO_PASSWORD} below resolve. The .env file is gitignored
+    # and chmod 600 — the values are never in the compose YAML.
+    env_file:
+      - .env
     environment:
-      # Cab's "instance name" appears in the M3U headers and shows
-      # up in the admin UI. Pick a stable string here so imports
-      # identify the source reliably.
-      - CAB_INSTANCE_NAME=TreeFrog
+      # Channels DVR emulation mode. The upstream image already
+      # defaults to this when run standalone, but pinning it makes
+      # the intent obvious.
+      - MODE=docker
+      # Inline via .env interpolation — see comment above.
+      - PLUTO_USERNAME=${PLUTO_USERNAME}
+      - PLUTO_PASSWORD=${PLUTO_PASSWORD}
