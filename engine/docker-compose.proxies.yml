@@ -1,26 +1,24 @@
-# Tree Frog Streams — Optional proxy stack (DistroTV + Samsung + Pluto)
+# Tree Frog Streams — Optional proxy stack (DistroTV + Samsung)
 #
-# Three free, ad-supported IPTV source proxies that sit alongside
-# tf-engine to add ~600 channels. They publish M3U+XMLTV endpoints
+# Two free, ad-supported IPTV source proxies that sit alongside
+# tf-engine to add ~550 channels. They publish M3U+XMLTV endpoints
 # the engine imports the same way it imports any other playlist.
 #
-# Xumo is NOT a container — there's no maintained standalone
-# Xumo-for-channels image. The Xumo M3U is imported directly as
-# a remote URL (see docs/proxy-stack.md §5). The repo's reference
-# generator lives at:
-#   https://github.com/BuddyChewChew/xumo-playlist-generator
+# Six additional sources (Pluto US/CA, Local Now, Plex US/CA,
+# Xumo) are imported as remote M3Us — no container, no port, no
+# CPU. See docs/proxy-stack.md §3 for the import commands.
 #
 # Architecture:
 #   ┌─────────────────┐   m3u+xmltv    ┌──────────┐    m3u+xmltv     ┌──────────────┐
 #   │ samsung-tvplus  │ ─────────────▶ │          │ ────────────────▶│   Worker     │
-#   │ pluto-for-chans │                │ tf-engine│   KV catalog     │ free.tfplus. │
-#   │ distrotv-proxy  │ ─────────────▶ │ 8000     │   KV playlist    │    stream    │
+#   │ distrotv-proxy  │                │ tf-engine│   KV catalog     │ free.tfplus. │
+#   │ + 6 remote M3Us │ ─────────────▶ │ 8000     │   KV playlist    │    stream    │
 #   └─────────────────┘                └──────────┘                  └──────────────┘
 #
-# All three bind via `network_mode: host` because (a) they don't
-# need isolation between each other and the engine, (b) M3U/EPG
-# endpoints are friendlier to type as localhost:PORT than as
-# docker-network IPs, and (c) the resource caps below make the
+# All containers bind via `network_mode: host` because (a) they
+# don't need isolation between each other and the engine, (b)
+# M3U/EPG endpoints are friendlier to type as localhost:PORT than
+# as docker-network IPs, and (c) the resource caps below make the
 # host kernel the single place to police CPU/memory.
 #
 # Bring this up with:
@@ -28,12 +26,11 @@
 #   docker compose -f engine/docker-compose.yml        up -d        # engine
 #   docker compose -f engine/docker-compose.proxies.yml up -d       # proxies
 #
-# See docs/proxy-stack.md for the per-proxy setup steps, auth
-# requirements, and the import commands.
+# See docs/proxy-stack.md for the per-proxy setup steps, the
+# remote-M3U import commands, and the verification curls.
 #
 # ── Port allocation on the host (DO NOT change without reading this) ──
 #
-#   80        — Pluto for Channels (this file; image default).
 #   3000      — **AIOstreams** (operator's most important service).
 #               RESERVED. Never bind a container here, never curl
 #               127.0.0.1:3000 as a diagnostic for any proxy.
@@ -42,10 +39,11 @@
 #   8787      — DistroTV Proxy (this file).
 #   50005     — SSH (already running on the host; never bind here).
 #
-# The matthuisman channels-dvr image used by Pluto defaults to port
-# 80. Samsung also defaults to 80, so we pin Samsung to 3001 via the
-# PORT env var to avoid a collision (and to keep AIOstreams on 3000
-# untouched).
+# The matthuisman samsung-tvplus image defaults to port 80. We pin
+# it to 3001 via the PORT env var to keep AIOstreams (port 3000)
+# untouched. (Pluto for Channels used to live on port 80 in an
+# earlier revision; it was dropped because Pluto's API returns an
+# empty channel list from cloud IPs — see proxy-stack.md top.)
 
 services:
   # ──────────────────────────────────────────────────────────────────
@@ -81,14 +79,13 @@ services:
   #
   # The image's URL shape is NOT the channels-dvr `/tuner-N-playlist.m3u`
   # convention — the M3U is at `/playlist.m3u8` (note the .m3u8
-  # extension) and the EPG is at `/xmltv.xml` (singular). The query
-  # param `?regions=us` filters the channel list; pinning REGIONS=us
-  # in the env so the upstream API doesn't return geo-restricted
+  # extension) and the EPG is at `/epg.xml`. The query param
+  # `?regions=us` filters the channel list; pinning REGIONS=us in
+  # the env so the upstream API doesn't return geo-restricted
   # channels that won't play outside their home region.
   #
   # The matthuisman image defaults to port 80. We pin it to 3001
-  # via the PORT env var to avoid a collision with Pluto (also
-  # port 80) and to keep AIOstreams (port 3000) untouched.
+  # via the PORT env var to keep AIOstreams (port 3000) untouched.
   #
   # M3U path:  http://<host>:3001/playlist.m3u8?regions=us
   # XMLTV:     http://<host>:3001/epg.xml
@@ -111,48 +108,3 @@ services:
       # engine's player will actually be able to play without a
       # Canadian egress IP. Start with us, expand later if you want.
       - REGIONS=us
-
-  # ──────────────────────────────────────────────────────────────────
-  # 3. Pluto for Channels (jonmaddox/pluto-for-channels)
-  #    https://github.com/jonmaddox/pluto-for-channels
-  # ──────────────────────────────────────────────────────────────────
-  # ~250 free, ad-supported channels from Pluto TV. Matthuisman
-  # channels-dvr style (nginx + uvicorn), so the URL shape is
-  # `/tuner-1-playlist.m3u` + `/epg.xml` on port 80.
-  #
-  # **Auth quirk:** this image's `entrypoint.sh` reads
-  # PLUTO_USERNAME and PLUTO_PASSWORD *directly* from the env, NOT
-  # via the ${VAR}_FILE pattern used elsewhere. The image will not
-  # start without those env vars set. To keep the creds out of
-  # the compose file, we read them from engine/.env (chmod 600,
-  # gitignored) using Compose's variable interpolation:
-  #
-  #   In engine/.env:
-  #     PLUTO_USERNAME=your-pluto-email
-  #     PLUTO_PASSWORD=your-pluto-password
-  #
-  # The compose file references ${PLUTO_USERNAME} / ${PLUTO_PASSWORD}
-  # so the actual values are never written to disk in a tracked
-  # file. The values DO show up in `docker inspect` on the host
-  # (this is unavoidable with this image) — keep engine/.env
-  # chmod 600 and limit who can SSH in.
-  pluto-for-channels:
-    image: jonmaddox/pluto-for-channels:latest
-    container_name: tf-pluto-for-channels
-    restart: unless-stopped
-    network_mode: host
-    volumes:
-      - ./data/pluto-for-channels:/config
-    # Load .env at the file level so ${PLUTO_USERNAME} /
-    # ${PLUTO_PASSWORD} below resolve. The .env file is gitignored
-    # and chmod 600 — the values are never in the compose YAML.
-    env_file:
-      - .env
-    environment:
-      # Channels DVR emulation mode. The upstream image already
-      # defaults to this when run standalone, but pinning it makes
-      # the intent obvious.
-      - MODE=docker
-      # Inline via .env interpolation — see comment above.
-      - PLUTO_USERNAME=${PLUTO_USERNAME}
-      - PLUTO_PASSWORD=${PLUTO_PASSWORD}
