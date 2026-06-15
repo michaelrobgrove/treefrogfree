@@ -205,12 +205,24 @@ async def handle_admin_channels(request: web.Request) -> web.Response:
 
 
 async def handle_admin_import(request: web.Request) -> web.Response:
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception as e:
+        return web.json_response({"error": f"invalid JSON body: {e}"}, status=400)
     url = body.get("url")
     label = body.get("label")
     if not url:
         return web.json_response({"error": "url required"}, status=400)
-    summary = await import_m3u(url, source_label=label)
+    try:
+        summary = await import_m3u(url, source_label=label)
+    except Exception as e:
+        # Return a clean JSON error so the admin UI can display it,
+        # rather than aiohttp's default 500 HTML page.
+        log.exception("M3U import failed for url=%s", url)
+        return web.json_response(
+            {"error": f"import failed: {type(e).__name__}: {e}", "url": url},
+            status=502,
+        )
     # Republish artifacts so the change is visible immediately.
     await write_playlist()
     await write_catalog()

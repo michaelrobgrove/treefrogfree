@@ -24,6 +24,12 @@ def _env(key: str, default: str | None = None, *, required: bool = False) -> str
     the deployment ships a path to a file (often a tmpfs mount or
     docker secret) instead of the value itself. This keeps raw secrets
     out of process listings, backup snapshots, and accidental commits.
+
+    If ${key}_FILE is set but the file is missing or unreadable, we
+    log a warning and fall through to the inline ${key} value rather
+    than crashing the process. That way, a typo in the path doesn't
+    take the engine offline — the operator just sees degraded behavior
+    (KV writes skipped with the "credentials missing" warning).
     """
     # 1. ${key}_FILE: read the file and strip whitespace (including a
     #    trailing newline, which is the standard format for these files).
@@ -33,7 +39,12 @@ def _env(key: str, default: str | None = None, *, required: bool = False) -> str
             with open(file_val, "r", encoding="utf-8") as fh:
                 val = fh.read().strip()
         except OSError as e:
-            raise RuntimeError(f"Could not read {key}_FILE={file_val!r}: {e}") from e
+            import logging
+            logging.getLogger("treefrog.config").warning(
+                "%s_FILE=%r could not be read (%s); falling back to inline %s",
+                key, file_val, e, key,
+            )
+            val = None
         if val:
             return val
     # 2. ${key} inline.

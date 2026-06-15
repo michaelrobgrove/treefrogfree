@@ -99,3 +99,41 @@ def test_serve_can_be_entered():
             pass
 
     asyncio.run(_probe())  # should not raise RuntimeError
+
+
+def test_env_file_fallback_on_missing_file(caplog):
+    """Regression: a missing *_FILE path used to crash the engine on
+    startup. It should now log a warning and fall through to the
+    inline value (or empty, if not set).
+    """
+    import logging
+    os.environ["MISSING_FILE"] = "/no/such/path/anywhere"
+    os.environ["MISSING"] = "inline-value"
+    try:
+        with caplog.at_level(logging.WARNING, logger="treefrog.config"):
+            got = engine.config._env("MISSING")
+        assert got == "inline-value", f"expected fallback to inline, got {got!r}"
+        # Confirm the warning was actually logged so the operator sees
+        # the misconfiguration rather than a silent degradation.
+        assert any("MISSING_FILE" in r.message for r in caplog.records), (
+            "expected a warning about MISSING_FILE"
+        )
+    finally:
+        os.environ.pop("MISSING_FILE", None)
+        os.environ.pop("MISSING", None)
+
+
+def test_env_file_existing_file_still_works():
+    """Positive case: when the *_FILE path actually points at a real
+    file, its content is returned (not the inline value).
+    """
+    f = Path(tempfile.mkdtemp()) / "secret.txt"
+    f.write_text("file-content\n")
+    os.environ["PRESENT_FILE"] = str(f)
+    os.environ["PRESENT"] = "should-be-ignored"
+    try:
+        got = engine.config._env("PRESENT")
+        assert got == "file-content"
+    finally:
+        os.environ.pop("PRESENT_FILE", None)
+        os.environ.pop("PRESENT", None)

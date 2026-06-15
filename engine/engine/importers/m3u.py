@@ -96,9 +96,14 @@ async def parse_url(url: str, *, session: aiohttp.ClientSession) -> AsyncIterato
 
     Use a 30s connect timeout, no overall read timeout (some M3U files are
     served slowly). The 64KB chunk size keeps memory bounded.
+
+    allow_redirects=True: aiohttp defaults to False, but most real-world
+    M3U URLs come from shorteners (tinyurl, bit.ly, etc.) that 302 to
+    the actual file. Without following redirects, the importer gets
+    back a 302 and the parse fails before the first line.
     """
     timeout = aiohttp.ClientTimeout(total=None, connect=30, sock_read=60)
-    async with session.get(url, timeout=timeout) as resp:
+    async with session.get(url, timeout=timeout, allow_redirects=True) as resp:
         resp.raise_for_status()
         # Make sure we're getting text. Some servers mislabel M3U as octet-stream.
         ctype = resp.headers.get("Content-Type", "").lower()
