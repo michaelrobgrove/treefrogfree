@@ -26,14 +26,20 @@ section).
 The M3U's tvg-id is the source of truth for the channel — we never
 rewrite it. But the M3U's tvg-id often has a quality suffix that the
 EPG feed doesn't (e.g. `WGBATV261.us@HD` vs. the EPG's `WGBATV261.us`).
-We resolve the EPG lookup with this strategy, in order:
+And some EPG feeds use entirely different tvg-id conventions
+(`WGBX-DT.us` vs. the M3U's `WGBX-TV.us`). We resolve the EPG lookup
+with this strategy, in order:
 
   1. Exact match: M3U's tvg-id == EPG's tvg-id.
   2. @suffix strip: `WGBATV261.us@HD` -> `WGBATV261.us` and try
      again. We strip a known set of quality suffixes
      (`@HD`, `@SD`, `@FHD`, `@4K`, `@HDTV`, `@US`, `@USA`,
      `@UK`, `@CA`, `@MX`, `@EU`, `@LATAM`, `@WEB`, `@LIVE`).
-  3. (Reserved for future) display-name fuzzy match.
+  3. Display-name fuzzy match: normalize() the M3U channel's
+     display_name and the EPG channel's <display-name> (both
+     stripped of hd/sd/+1/east/west/usa etc.) and look for an
+     exact match. `normalize("WGBX-TV Boston, MA")` ==
+     `normalize("WGBX-DT Boston, MA US")` == `"wgbx boston ma"`.
 
 The KV key always uses the *original* M3U tvg-id (so the player can
 do `/api/epg/nownext/<channels.tvg_id>` and get a hit), and the
@@ -59,6 +65,7 @@ from xml.etree import ElementTree as ET
 import aiohttp
 
 from ..admin.epg import EPG_DIR
+from ..consolidator import normalize
 from ..db import open_db
 from .kv import _put_kv
 
@@ -96,7 +103,8 @@ def _parse_xmltv_dt(s: str) -> Optional[datetime]:
         return None
     s = s.strip()
     # XMLTV allows an optional ' +0000' offset; some feeds omit it.
-    if len(s) >= 15 and s[:14].isdigit():
+    # Accept either form: 14 digits (no offset) or 14 digits + ' +0000'.
+    if s[:14].isdigit() and (len(s) == 14 or (len(s) >= 15 and s[14:].strip() in ("", "+0000"))):
         try:
             dt = datetime(
                 int(s[0:4]), int(s[4:6]), int(s[6:8]),
@@ -239,28 +247,55 @@ async def publish_nownext(*, force: bool = False) -> dict:
         log.info("publish_nownext: no cached XMLTV; nothing to do")
         return {"written": 0, "unchanged": 0, "errors": 0, "total": 0, "skipped": 0}
 
-    # Step 1: every distinct EPG tvg_id from the cached XMLTV.
-    # We use this as the "EPG side" of the matcher.
+    # Step 1: every distinct EPG tvg_id from the cached XMLTV,
+    # plus a {normalized-display-name -> tvg_id} index for the
+    # fuzzy fallback pass.
     try:
         tree = ET.parse(str(xml))
     except Exception as e:
         log.warning("publish_nownext: failed to parse %s: %s", xml, e)
         return {"written": 0, "unchanged": 0, "errors": 0, "total": 0, "skipped": 0}
-    epg_tvg_ids = {
-        (ch.get("id") or "").strip()
-        for ch in tree.getroot().findall("channel")
-    }
-    epg_tvg_ids.discard("")
+    root = tree.getroot()
+    epg_tvg_ids: set[str] = set()
+    epg_name_index: dict[str, str] = {}  # normalized -> tvg_id
+    for ch in root.findall("channel"):
+        tid = (ch.get("id") or "").strip()
+        if not tid:
+            continue
+        epg_tvg_ids.add(tid)
+        # A <channel> can carry multiple <display-name>; index the
+        # first normalized hit. (If two EPG channels normalize to the
+        # same key, the first one wins — usually fine since the
+        # M3U side is even more redundant.)
+        for name_el in ch.findall("display-name"):
+            raw = (name_el.text or "").strip()
+            if not raw:
+                continue
+            key = normalize(raw)
+            if key and key not in epg_name_index:
+                epg_name_index[key] = tid
+                break
 
     # Step 2: every distinct channel tvg_id, plus the resolution to
     # an EPG tvg_id using the matching strategy described in the
-    # module docstring (exact, then @suffix-strip).
+    # module docstring (exact, then @suffix-strip, then display-name).
     db = await open_db()
     try:
         async with db.execute(
             "SELECT DISTINCT tvg_id FROM channels WHERE tvg_id IS NOT NULL"
         ) as cur:
             channel_tvg_ids = [row["tvg_id"] for row in await cur.fetchall()]
+        # Display names are needed only for the third matching pass;
+        # pull them up front so we don't do a query per channel.
+        async with db.execute(
+            "SELECT tvg_id, display_name FROM channels "
+            "WHERE tvg_id IS NOT NULL"
+        ) as cur:
+            channel_display: dict[str, str] = {
+                row["tvg_id"]: row["display_name"]
+                for row in await cur.fetchall()
+                if row["display_name"]
+            }
     finally:
         await db.close()
 
@@ -274,16 +309,32 @@ async def publish_nownext(*, force: bool = False) -> dict:
     # key is the EPG tvg_id.
     channel_to_epg: dict[str, Optional[str]] = {}
     mapped: set[str] = set()
+    n_exact = n_suffix = n_name = 0
     for ctid in channel_tvg_ids:
         if ctid in epg_tvg_ids:
             channel_to_epg[ctid] = ctid
             mapped.add(ctid)
+            n_exact += 1
             continue
         stripped = _strip_quality_suffix(ctid)
         if stripped and stripped != ctid and stripped in epg_tvg_ids:
             channel_to_epg[ctid] = stripped
             mapped.add(stripped)
+            n_suffix += 1
             continue
+        # Display-name fallback. The M3U's display_name often contains
+        # the call-sign + city ("WGBX-TV Boston, MA") while the EPG's
+        # does the same with a different station-suffix convention
+        # ("WGBX-DT Boston, MA US"). normalize() drops all of that.
+        display = channel_display.get(ctid)
+        if display:
+            key = normalize(display)
+            if key and key in epg_name_index:
+                epg_tid = epg_name_index[key]
+                channel_to_epg[ctid] = epg_tid
+                mapped.add(epg_tid)
+                n_name += 1
+                continue
         channel_to_epg[ctid] = None  # no EPG mapping; skip
 
     if not mapped:
@@ -295,11 +346,10 @@ async def publish_nownext(*, force: bool = False) -> dict:
 
     log.info(
         "publish_nownext: %d/%d channels matched an EPG tvg_id "
-        "(%d via exact, %d via @suffix strip)",
+        "(%d via exact, %d via @suffix strip, %d via display-name)",
         sum(1 for v in channel_to_epg.values() if v is not None),
         len(channel_tvg_ids),
-        sum(1 for c, e in channel_to_epg.items() if e and e == c),
-        sum(1 for c, e in channel_to_epg.items() if e and e != c),
+        n_exact, n_suffix, n_name,
     )
 
     # Step 3: compute now/next for the EPG tvg-ids we matched.
