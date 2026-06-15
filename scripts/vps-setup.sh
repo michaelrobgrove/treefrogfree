@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Run this ONCE on the VPS to install Docker, clone the repo, and
 # boot the engine. After it completes, follow the remaining steps in
-# docs/vps-deploy.md to wire up the tunnel and DNS.
+# docs/vps-deploy.md to wire up DNS and Access.
 #
 # Run as a user with sudo rights (NOT as root).
 
 set -euo pipefail
 
 REPO_URL="https://github.com/michaelrobgrove/treefrogfree.git"
+# Pin a branch so the script is deterministic. Override with BRANCH=...
+BRANCH="${BRANCH:-main}"
 INSTALL_DIR="/opt/treefrogfree"
 
 echo "==> Installing Docker (if missing)..."
@@ -17,13 +19,13 @@ if ! command -v docker >/dev/null 2>&1; then
     echo "Docker installed. You may need to log out and back in for group changes to take effect."
 fi
 
-echo "==> Cloning repo to ${INSTALL_DIR}..."
+echo "==> Cloning repo to ${INSTALL_DIR} (branch: ${BRANCH})..."
 if [ ! -d "$INSTALL_DIR" ]; then
-    sudo git clone "$REPO_URL" "$INSTALL_DIR"
+    sudo git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
     sudo chown -R "$USER:$USER" "$INSTALL_DIR"
 else
-    echo "Already cloned; pulling latest..."
-    (cd "$INSTALL_DIR" && git pull)
+    echo "Already cloned; pulling latest from $BRANCH..."
+    (cd "$INSTALL_DIR" && git pull origin "$BRANCH")
 fi
 
 cd "$INSTALL_DIR/engine"

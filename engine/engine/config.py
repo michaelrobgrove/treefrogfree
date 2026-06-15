@@ -18,6 +18,25 @@ load_dotenv(_PROJECT_ROOT / ".env", override=False)
 
 
 def _env(key: str, default: str | None = None, *, required: bool = False) -> str:
+    """Read an env var, preferring ${key}_FILE (file content) over ${key}.
+
+    The _FILE pattern is the standard Docker/secrets-manager convention:
+    the deployment ships a path to a file (often a tmpfs mount or
+    docker secret) instead of the value itself. This keeps raw secrets
+    out of process listings, backup snapshots, and accidental commits.
+    """
+    # 1. ${key}_FILE: read the file and strip whitespace (including a
+    #    trailing newline, which is the standard format for these files).
+    file_val = os.getenv(f"{key}_FILE", "").strip()
+    if file_val:
+        try:
+            with open(file_val, "r", encoding="utf-8") as fh:
+                val = fh.read().strip()
+        except OSError as e:
+            raise RuntimeError(f"Could not read {key}_FILE={file_val!r}: {e}") from e
+        if val:
+            return val
+    # 2. ${key} inline.
     val = os.getenv(key, default)
     if required and (val is None or val == ""):
         raise RuntimeError(f"Required env var {key!r} is not set")

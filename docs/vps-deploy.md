@@ -18,6 +18,20 @@ docker compose logs -f tf-engine   # watch the first cycle
 cd edge && npm run deploy
 ```
 
+> **Don't put real API tokens in your shell history or in any
+> committed file.** Use a `.token` file (gitignored) and reference it
+> from `.env`. Example layout:
+>
+> ```bash
+> # /opt/treefrogfree/engine/.env
+> CF_API_TOKEN_FILE=/root/.secrets/cf.token
+> ADMIN_TOKEN_FILE=/root/.secrets/admin.token
+> ```
+>
+> The engine reads `${VAR}_FILE` paths if set, before falling back to
+> `${VAR}` inline values. Keep your real tokens in `chmod 600`
+> files outside the repo.
+
 That's it for the moving parts. The rest of this doc covers the one-time
 Cloudflare + DNS + tunnel setup.
 
@@ -110,6 +124,22 @@ CF_ACCOUNT_ID=db91f29588dc8d30fcee5fc934e97d1d
 CF_KV_NAMESPACE_ID=0fc0537c9a5642c0a327679b16a05128
 ADMIN_TOKEN=<32 bytes of randomness, e.g.  openssl rand -hex 32>
 LOG_LEVEL=INFO
+```
+
+**Security note:** if you'd rather not have raw tokens in a dotenv
+file, use the `${VAR}_FILE` pattern (docker compose supports it
+natively):
+
+```bash
+# Create the token file
+sudo mkdir -p /root/.secrets
+sudo nano /root/.secrets/cf.token     # paste the API token, single line
+sudo nano /root/.secrets/admin.token  # paste a 32-byte random token
+sudo chmod 600 /root/.secrets/*.token
+
+# Reference it in .env
+echo 'CF_API_TOKEN_FILE=/root/.secrets/cf.token' >> /opt/treefrogfree/engine/.env
+echo 'ADMIN_TOKEN_FILE=/root/.secrets/admin.token' >> /opt/treefrogfree/engine/.env
 ```
 
 Then re-run the script (or just `docker compose up -d`).
