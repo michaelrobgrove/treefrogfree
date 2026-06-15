@@ -77,16 +77,20 @@ services:
   # 2. Samsung TV Plus for Channels (matthuisman/samsung-tvplus-for-channels)
   #    https://github.com/matthuisman/samsung-tvplus-for-channels
   # ──────────────────────────────────────────────────────────────────
-  # ~400 ad-supported "Samsung TV Plus" channels. Channels DVR–compat
-  # backend, so the URL shape is `/tuner-N-playlist.m3u` + `/epg.xml`.
-  # Widevine DRM streams are filtered out — only HLS reaches the
-  # engine, which our player handles natively.
+  # ~400 ad-supported "Samsung TV Plus" channels.
+  #
+  # The image's URL shape is NOT the channels-dvr `/tuner-N-playlist.m3u`
+  # convention — the M3U is at `/playlist.m3u8` (note the .m3u8
+  # extension) and the EPG is at `/xmltv.xml` (singular). The query
+  # param `?regions=us` filters the channel list; pinning REGIONS=us
+  # in the env so the upstream API doesn't return geo-restricted
+  # channels that won't play outside their home region.
   #
   # The matthuisman image defaults to port 80. We pin it to 3001
   # via the PORT env var to avoid a collision with Pluto (also
   # port 80) and to keep AIOstreams (port 3000) untouched.
   #
-  # M3U path:  http://<host>:3001/tuner-1-playlist.m3u
+  # M3U path:  http://<host>:3001/playlist.m3u8?regions=us
   # XMLTV:     http://<host>:3001/epg.xml
   samsung-tvplus:
     image: matthuisman/samsung-tvplus-for-channels:latest
@@ -102,6 +106,11 @@ services:
     environment:
       # Pin to 3001 — see comment block at top of file.
       - PORT=3001
+      # Limit to US channels. The upstream supports a | separated
+      # list (us|ca) but we don't know which Canadian channels the
+      # engine's player will actually be able to play without a
+      # Canadian egress IP. Start with us, expand later if you want.
+      - REGIONS=us
 
   # ──────────────────────────────────────────────────────────────────
   # 3. Pluto for Channels (jonmaddox/pluto-for-channels)

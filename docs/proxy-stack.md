@@ -136,27 +136,30 @@ docker compose -f engine/docker-compose.proxies.yml logs --tail=20 samsung-tvplu
 # instead, the env var didn't take. Check
 # `docker inspect tf-samsung-tvplus | grep -A2 PORT`.
 
-# Verify with GET (not HEAD — the BaseHTTP backend only handles GET):
+# Verify with GET (not HEAD — the BaseHTTP backend only handles GET).
+# Note the path: /playlist.m3u8 (with the .m3u8 extension), NOT
+# /tuner-1-playlist.m3u. The `?regions=us` filter is also set as
+# REGIONS=us in the compose, so it's redundant but explicit here.
 curl -s -o /tmp/samsung.m3u -w 'HTTP %{http_code}, %{size_download}B, type=%{content_type}\n' \
-  http://127.0.0.1:3001/tuner-1-playlist.m3u
+  'http://127.0.0.1:3001/playlist.m3u8?regions=us'
 head -3 /tmp/samsung.m3u
 wc -l /tmp/samsung.m3u
 # Expect: HTTP 200, several hundred KB, type=audio/x-mpegurl,
 # body starts with "#EXTM3U", ~400-500 lines.
 
-# Import the full channel list (tuner-1 has them all):
+# Import the full channel list:
 cd /opt/treefrogfree/engine
 docker compose exec tf-engine python -m engine seed \
-  --m3u http://127.0.0.1:3001/tuner-1-playlist.m3u \
+  --m3u 'http://127.0.0.1:3001/playlist.m3u8?regions=us' \
   --label "Samsung TV Plus"
 
-# EPG is at /epg.xml (singular, not /xmltv.xml).
+# EPG is at /epg.xml — confirmed working in production (a
+# previous import of /xmltv.xml was wrong; the image actually
+# serves EPG at /epg.xml, ~14 MB / ~2500 channels for the US
+# region).
 docker compose exec tf-engine python -m engine epg-import \
   --url http://127.0.0.1:3001/epg.xml
 ```
-
-Don't bother importing tuners 2-12 — they're the same channels
-split into 12 buckets. Tuner 1 is the full lineup.
 
 ## 3. Pluto for Channels — port 80
 
