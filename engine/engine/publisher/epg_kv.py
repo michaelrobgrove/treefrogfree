@@ -21,6 +21,25 @@ in the existing STREAM_KV namespace at `epg:nownext:<tvg_id>`:
 (we don't publish a key for them; the player 404s and hides the
 section).
 
+### Tvg-id matching
+
+The M3U's tvg-id is the source of truth for the channel — we never
+rewrite it. But the M3U's tvg-id often has a quality suffix that the
+EPG feed doesn't (e.g. `WGBATV261.us@HD` vs. the EPG's `WGBATV261.us`).
+We resolve the EPG lookup with this strategy, in order:
+
+  1. Exact match: M3U's tvg-id == EPG's tvg-id.
+  2. @suffix strip: `WGBATV261.us@HD` -> `WGBATV261.us` and try
+     again. We strip a known set of quality suffixes
+     (`@HD`, `@SD`, `@FHD`, `@4K`, `@HDTV`, `@US`, `@USA`,
+     `@UK`, `@CA`, `@MX`, `@EU`, `@LATAM`, `@WEB`, `@LIVE`).
+  3. (Reserved for future) display-name fuzzy match.
+
+The KV key always uses the *original* M3U tvg-id (so the player can
+do `/api/epg/nownext/<channels.tvg_id>` and get a hit), and the
+`compute_nownext` payload is taken from the EPG tvg-id that the
+matcher selected.
+
 The publish step runs after every EPG re-import (every 6h via the
 scheduler) and is also exposed via the `publish` CLI subcommand and
 the admin /rebuild-kv handler.
@@ -30,6 +49,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,6 +63,21 @@ from ..db import open_db
 from .kv import _put_kv
 
 log = logging.getLogger("treefrog.kv")
+
+# Quality / region suffixes that M3U tvg-ids often carry and that the
+# EPG feed usually omits. We strip them when looking for an EPG match.
+# Tweak with care — adding short common letters like `@a` would
+# produce false positives.
+_TVG_QUALITY_SUFFIXES = re.compile(
+    r"@(HD|SD|FHD|4K|HDTV|US|USA|UK|CA|MX|EU|LATAM|WEB|LIVE)$",
+    re.IGNORECASE,
+)
+
+
+def _strip_quality_suffix(tvg_id: str) -> str:
+    """Remove a known quality / region suffix from a tvg-id. Returns
+    the input unchanged if no suffix matches."""
+    return _TVG_QUALITY_SUFFIXES.sub("", tvg_id)
 
 
 @dataclass(frozen=True)
@@ -204,47 +239,95 @@ async def publish_nownext(*, force: bool = False) -> dict:
         log.info("publish_nownext: no cached XMLTV; nothing to do")
         return {"written": 0, "unchanged": 0, "errors": 0, "total": 0, "skipped": 0}
 
+    # Step 1: every distinct EPG tvg_id from the cached XMLTV.
+    # We use this as the "EPG side" of the matcher.
+    try:
+        tree = ET.parse(str(xml))
+    except Exception as e:
+        log.warning("publish_nownext: failed to parse %s: %s", xml, e)
+        return {"written": 0, "unchanged": 0, "errors": 0, "total": 0, "skipped": 0}
+    epg_tvg_ids = {
+        (ch.get("id") or "").strip()
+        for ch in tree.getroot().findall("channel")
+    }
+    epg_tvg_ids.discard("")
+
+    # Step 2: every distinct channel tvg_id, plus the resolution to
+    # an EPG tvg_id using the matching strategy described in the
+    # module docstring (exact, then @suffix-strip).
     db = await open_db()
     try:
         async with db.execute(
-            """
-            SELECT DISTINCT c.tvg_id
-            FROM channels c
-            JOIN epg_channels e ON e.tvg_id = c.tvg_id
-            WHERE c.tvg_id IS NOT NULL
-            """
+            "SELECT DISTINCT tvg_id FROM channels WHERE tvg_id IS NOT NULL"
         ) as cur:
-            tvg_ids = {row["tvg_id"] for row in await cur.fetchall()}
+            channel_tvg_ids = [row["tvg_id"] for row in await cur.fetchall()]
     finally:
         await db.close()
 
-    if not tvg_ids:
-        log.info("publish_nownext: no mapped tvg-ids; nothing to do")
+    if not channel_tvg_ids:
+        log.info("publish_nownext: no channels with tvg_id; nothing to do")
         return {"written": 0, "unchanged": 0, "errors": 0, "total": 0, "skipped": 0}
 
+    # `mapped` is the set of EPG tvg-ids we need to compute now/next
+    # for. `channel_to_epg` maps each M3U tvg_id → EPG tvg_id (or
+    # None if no match). The KV key is the M3U tvg_id; the compute
+    # key is the EPG tvg_id.
+    channel_to_epg: dict[str, Optional[str]] = {}
+    mapped: set[str] = set()
+    for ctid in channel_tvg_ids:
+        if ctid in epg_tvg_ids:
+            channel_to_epg[ctid] = ctid
+            mapped.add(ctid)
+            continue
+        stripped = _strip_quality_suffix(ctid)
+        if stripped and stripped != ctid and stripped in epg_tvg_ids:
+            channel_to_epg[ctid] = stripped
+            mapped.add(stripped)
+            continue
+        channel_to_epg[ctid] = None  # no EPG mapping; skip
+
+    if not mapped:
+        log.info(
+            "publish_nownext: %d channels w/ tvg_id, 0 matched EPG; nothing to do",
+            len(channel_tvg_ids),
+        )
+        return {"written": 0, "unchanged": 0, "errors": 0, "total": 0, "skipped": 0}
+
+    log.info(
+        "publish_nownext: %d/%d channels matched an EPG tvg_id "
+        "(%d via exact, %d via @suffix strip)",
+        sum(1 for v in channel_to_epg.values() if v is not None),
+        len(channel_tvg_ids),
+        sum(1 for c, e in channel_to_epg.items() if e and e == c),
+        sum(1 for c, e in channel_to_epg.items() if e and e != c),
+    )
+
+    # Step 3: compute now/next for the EPG tvg-ids we matched.
     now = datetime.now(timezone.utc)
-    computed = compute_nownext(xml, tvg_ids, now)
+    computed = compute_nownext(xml, mapped, now)
     generated_at = _format_iso(now)
 
+    # Step 4: write one KV blob per *channel* tvg_id, sourcing the
+    # payload from the matching *EPG* tvg_id.
     written = unchanged = errors = 0
     skipped = 0
     connector = aiohttp.TCPConnector(limit=20)
     async with aiohttp.ClientSession(connector=connector) as session:
         sem = asyncio.Semaphore(20)
 
-        async def process(tid: str, payload: dict) -> None:
+        async def process(channel_tid: str) -> None:
             nonlocal written, unchanged, errors, skipped
+            epg_tid = channel_to_epg.get(channel_tid)
+            if epg_tid is None:
+                return  # no EPG mapping
+            payload = computed.get(epg_tid) or _empty()
             async with sem:
-                # Channels with both now/next null still get a key
-                # written, so the player can distinguish "no XML
-                # mapping" (404) from "mapped, off-air" (200 with
-                # nulls). This costs at most O(channels) extra KV
-                # writes every 6h.
                 if payload.get("now") is None and payload.get("next") is None:
                     skipped += 1
                 body = json.dumps(
                     {
-                        "tvg_id": tid,
+                        "tvg_id": channel_tid,
+                        "epg_tvg_id": epg_tid,
                         "generated_at": generated_at,
                         "now": payload["now"],
                         "next": payload["next"],
@@ -254,25 +337,25 @@ async def publish_nownext(*, force: bool = False) -> dict:
                 )
                 if not force:
                     from .kv import _get_kv
-                    current = await _get_kv(session, f"epg:nownext:{tid}")
+                    current = await _get_kv(session, f"epg:nownext:{channel_tid}")
                     if current == body:
                         unchanged += 1
                         return
-                if await _put_kv(session, f"epg:nownext:{tid}", body):
+                if await _put_kv(session, f"epg:nownext:{channel_tid}", body):
                     written += 1
                 else:
                     errors += 1
 
-        await asyncio.gather(*(process(tid, computed[tid]) for tid in tvg_ids))
+        await asyncio.gather(*(process(ctid) for ctid in channel_tvg_ids if channel_to_epg.get(ctid)))
 
     log.info(
-        "KV EPG now/next: written=%d unchanged=%d errors=%d skipped=%d (of %d tvg-ids)",
-        written, unchanged, errors, skipped, len(tvg_ids),
+        "KV EPG now/next: written=%d unchanged=%d errors=%d skipped=%d (of %d channels)",
+        written, unchanged, errors, skipped, len(channel_tvg_ids),
     )
     return {
         "written": written,
         "unchanged": unchanged,
         "errors": errors,
         "skipped": skipped,
-        "total": len(tvg_ids),
+        "total": len(channel_tvg_ids),
     }
