@@ -162,9 +162,9 @@ You should see:
 
 ### 2.3 Tailscale (required for admin access)
 
-The admin API binds to `127.0.0.1:8000` and the admin UI talks to it
-directly from your browser. The Worker does **not** proxy `/api/*` —
-the engine has no public URL.
+The admin API listens on the Tailscale interface (not loopback) and
+the admin UI talks to it directly from your browser. The Worker does
+**not** proxy `/api/*` — the engine has no public URL.
 
 ```bash
 # On the VPS:
@@ -173,14 +173,70 @@ sudo tailscale up
 # Visit https://login.tailscale.com/admin/machines to confirm.
 ```
 
+Now edit `engine/.env` so the engine binds to the Tailscale IP
+instead of loopback. The default is `ADMIN_HOST=127.0.0.1`, which
+makes the admin API unreachable over Tailscale (loopback only
+accepts connections from the same host):
+
+```bash
+echo 'ADMIN_HOST=0.0.0.0' | sudo tee -a /opt/treefrogfree/engine/.env
+cd /opt/treefrogfree
+docker compose -f engine/docker-compose.yml up -d --build tf-engine
+docker compose -f engine/docker-compose.yml logs tf-engine \
+  | grep 'API server listening'
+```
+
+> ⚠️  `0.0.0.0` binds the admin API to **every** interface on the
+> VPS — including the public NIC. That is **safe only because**
+> (a) the admin endpoints require a Bearer token and (b) the host
+> firewall (UFW/nftables) blocks the public NIC — see §2.4. If
+> you'd rather restrict the bind, replace `0.0.0.0` with the
+> Tailscale interface IP (`ip -4 addr show tailscale0 | awk
+> '/inet /{print $2}' | cut -d/ -f1`).
+
 You can now reach the admin API at `http://<vps-tailscale-ip>:8000`
-from any device on your Tailscale network. The admin UI is configured
-with that IP baked in (see `edge/public/admin/index.html`).
+from any device on your Tailscale network. The admin UI is
+configured with that IP baked in (see
+`edge/public/admin/index.html`).
 
 > If you'd rather not bake in an IP, edit the `ENGINE_API` line in
 > `edge/public/admin/index.html` to your preferred hostname (Tailscale
 > MagicDNS, Cloudflare Tunnel hostname, etc.), then `npm run deploy`
 > from the `edge/` dir.
+
+### 2.4 Firewall (UFW rules for the Tailscale subnet)
+
+`ADMIN_HOST=0.0.0.0` exposes the admin API on every interface, so
+the host firewall has to refuse public-NIC traffic and only allow
+the Tailscale subnet. The defaults below assume UFW is installed
+and active.
+
+```bash
+# 1. Allow the Tailscale subnet (100.64.0.0/10) to the admin port.
+sudo ufw allow in on tailscale0 to any port 8000 comment 'tf-engine admin (tailscale)'
+
+# 2. Deny the admin port on every other interface — the explicit
+#    deny is what stops an attacker who guesses your Tailscale
+#    prefix from reaching the admin API via the public NIC.
+sudo ufw deny 8000 comment 'tf-engine admin (deny public)'
+
+# 3. Make sure SSH is still allowed (UFW's default profile permits
+#    it, but worth checking if you started from a custom ruleset).
+sudo ufw allow OpenSSH
+sudo ufw status verbose
+```
+
+The final `ufw status verbose` should show:
+
+- 8000/tcp DENY IN (anywhere) — blocks public-NIC attempts
+- 8000/tcp ALLOW IN on tailscale0 — permits the Tailscale subnet
+- 22/tcp ALLOW IN — keeps SSH reachable
+
+> If you use `nftables`/`iptables` directly, the equivalent rules
+> are: allow tcp dport 8000 iif "tailscale0", and drop tcp dport
+> 8000 from the public interface. Docker publishes the engine
+> container via `network_mode: host` so the host firewall sees the
+> traffic directly — no DOCKER-USER chain gymnastics needed.
 
 ---
 
@@ -334,5 +390,6 @@ crontab. Suggested:
 | `/s/<token>` returns 410 | Token isn't in KV. Check engine logs: did `publish_redirects` run? Did the channel have any online stream? |
 | `/api/channels.json` or `/playlist.m3u` returns 503 | Engine hasn't published yet. Wait for the first health cycle. KV writes are eventually consistent — they may also take ~30s to propagate to all edge POPs. |
 | Engine health checks all fail | The VPS probably can't reach the source provider. Test from inside the container: `docker compose exec tf-engine curl -I https://example.com/test.m3u8`. |
-| Admin UI shows "Failed to load" | Engine API not reachable from your browser. Check Tailscale is up on both ends, the engine is listening on `127.0.0.1:8000`, and the `ENGINE_API` in `edge/public/admin/index.html` matches your VPS's Tailscale IP. |
+| Admin UI shows "Failed to load" | Engine API not reachable from your browser. Check Tailscale is up on both ends, `ADMIN_HOST=0.0.0.0` is in `engine/.env` (or the Tailscale interface IP), the UFW rule from §2.4 allows 100.64.0.0/10 → 8000, and the `ENGINE_API` in `edge/public/admin/index.html` matches your VPS's Tailscale IP. |
+| Admin UI loads engine at `http://...:8000/admin/` but page is 503 with "Admin UI assets are not mounted" | The bind mount `../edge/public/admin -> /app/admin_static` is missing or empty. Run `cd /opt/treefrogfree && git pull` then `docker compose -f engine/docker-compose.yml up -d --build`. A plain `docker compose restart` does NOT re-bind volumes. |
 | KV writes are 403 | `CF_API_TOKEN` is wrong or doesn't have `Workers KV Storage: Edit` permission. |
