@@ -14,6 +14,7 @@ exit). Instead we verify:
      that can be awaited without re-entering the event loop.
 """
 import asyncio
+import pytest
 import sys
 import tempfile
 import os
@@ -54,6 +55,9 @@ def test_subcommands_known():
         (["check-once"], "check-once"),
         (["publish"], "publish"),
         (["migrate"], "migrate"),
+        (["epg-import", "--url", "https://example.com/x.xml"], "epg-import"),
+        (["reset-uptime"], "reset-uptime"),
+        (["reset-uptime", "--hours", "24", "--no-recompute"], "reset-uptime"),
         (["stats"], "stats"),
     ]
     for argv, expected in cases:
@@ -322,3 +326,134 @@ def test_admin_ui_handler_503_when_assets_unmounted(monkeypatch, tmp_path):
     resp = asyncio.run(server.handle_admin_ui(req))
     assert resp.status == 503
     assert "not mounted" in resp.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_reset_uptime_drops_recent_health_logs(monkeypatch, tmp_path):
+    """`reset-uptime --hours 24` should drop the most recent 24h of
+    health_logs. We seed two rows (one old, one recent), one stream,
+    and one channel. After the reset only the old row should remain.
+    """
+    import sqlite3
+    import aiosqlite
+    from engine import __main__ as cli
+
+    db_file = tmp_path / "reset.db"
+    _seed_minimal_db(db_file)
+
+    # Swap out engine.db.open_db (and the symbol re-exported into
+    # engine.__main__) with a function that opens *our* file. We
+    # also have to point the async-context-manager-style close() —
+    # the real open_db returns a connection whose .close() is async;
+    # we mirror that.
+    async def _open_my_db():
+        conn = await aiosqlite.connect(str(db_file))
+        conn.row_factory = aiosqlite.Row
+        return conn
+    monkeypatch.setattr(cli, "open_db", _open_my_db)
+    # And stub the catalog republish so we don't need a real public dir.
+    async def _noop():
+        return None
+    monkeypatch.setattr(cli, "write_catalog", _noop)
+
+    rc = await cli._cmd_reset_uptime(
+        cli._build_parser().parse_args(["reset-uptime", "--hours", "24"])
+    )
+    assert rc == 0
+
+    # Verify the recent row is gone and the old one is kept. The
+    # surviving row's timestamp must be more than 24h old (the
+    # `--hours 24` cutoff). The seeded "30 days ago" row lives
+    # outside the window so it survives.
+    conn = sqlite3.connect(str(db_file))
+    rows = conn.execute("SELECT checked_at FROM health_logs").fetchall()
+    conn.close()
+    assert len(rows) == 1, f"expected 1 health_log row, got {len(rows)}"
+    # The old row's `checked_at` is a SQLite-formatted timestamp that
+    # is well before `now - 24h`. We just need to know we didn't
+    # accidentally keep the recent (1h ago) row.
+    from datetime import datetime, timedelta
+    survived = datetime.strptime(rows[0][0], "%Y-%m-%d %H:%M:%S")
+    age = datetime.now() - survived
+    assert age > timedelta(hours=24), (
+        f"surviving row is too recent ({age}); the cutoff isn't being applied"
+    )
+
+
+@pytest.mark.asyncio
+async def test_reset_uptime_no_recompute_skips_republish(monkeypatch, tmp_path):
+    """`--no-recompute` must skip the catalog republish — the operator
+    just wants to drop history and let the next health cycle fill it
+    back in. The DELETE always runs (covered by the previous test);
+    this one is scoped tight to the no-recompute branch."""
+    from engine import __main__ as cli
+    import aiosqlite
+
+    db_file = tmp_path / "norecomp.db"
+    _seed_minimal_db(db_file)
+
+    async def _open_my_db():
+        conn = await aiosqlite.connect(str(db_file))
+        conn.row_factory = aiosqlite.Row
+        return conn
+    monkeypatch.setattr(cli, "open_db", _open_my_db)
+
+    write_catalog_called = False
+    async def _spy_write_catalog():
+        nonlocal write_catalog_called
+        write_catalog_called = True
+    monkeypatch.setattr(cli, "write_catalog", _spy_write_catalog)
+
+    rc = await cli._cmd_reset_uptime(
+        cli._build_parser().parse_args(["reset-uptime", "--no-recompute"])
+    )
+    assert rc == 0
+    assert not write_catalog_called, "no-recompute must skip write_catalog"
+
+
+def _seed_minimal_db(path: Path) -> None:
+    """Create the three tables the reset handler touches and seed
+    one channel, one stream, two health_logs (one old, one recent).
+    The 'recent' row is the one reset-uptime should drop."""
+    import sqlite3
+    conn = sqlite3.connect(str(path))
+    conn.executescript("""
+        CREATE TABLE streams (
+            id INTEGER PRIMARY KEY,
+            channel_id INTEGER NOT NULL,
+            url TEXT NOT NULL,
+            status TEXT NOT NULL
+        );
+        CREATE TABLE channels (
+            id INTEGER PRIMARY KEY,
+            display_name TEXT,
+            availability_pct REAL NOT NULL DEFAULT 100.0,
+            last_checked_at TEXT,
+            updated_at TEXT,
+            status TEXT NOT NULL DEFAULT 'online'
+        );
+        CREATE TABLE health_logs (
+            id INTEGER PRIMARY KEY,
+            stream_id INTEGER NOT NULL,
+            checked_at TEXT NOT NULL,
+            ok INTEGER NOT NULL
+        );
+    """)
+    conn.execute(
+        "INSERT INTO channels (id, display_name, availability_pct, status) "
+        "VALUES (1, 'Test', 0.0, 'online')"
+    )
+    conn.execute(
+        "INSERT INTO streams (id, channel_id, url, status) "
+        "VALUES (1, 1, 'http://example/stream', 'online')"
+    )
+    conn.execute(
+        "INSERT INTO health_logs (stream_id, checked_at, ok) "
+        "VALUES (1, datetime('now', '-30 days'), 1)"  # old → keep
+    )
+    conn.execute(
+        "INSERT INTO health_logs (stream_id, checked_at, ok) "
+        "VALUES (1, datetime('now', '-1 hour'), 0)"   # recent → drop
+    )
+    conn.commit()
+    conn.close()

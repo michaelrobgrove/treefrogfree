@@ -7,6 +7,7 @@ Usage:
     python -m engine publish            # re-render playlist + catalog only
     python -m engine migrate            # apply DB migrations and exit
     python -m engine epg-import --url <xmltv-url>  # one-shot XMLTV import
+    python -m engine reset-uptime       # clear stale availability_pct values
     python -m engine stats              # print summary stats
 """
 from __future__ import annotations
@@ -68,6 +69,26 @@ def _build_parser() -> argparse.ArgumentParser:
 
     stats = sub.add_parser("stats", help="Print summary stats and exit")
     stats.add_argument("--json", action="store_true", help="Output JSON instead of text")
+
+    reset = sub.add_parser(
+        "reset-uptime",
+        help=(
+            "Reset stale availability_pct values. Drops the most recent "
+            "N hours of health_logs and recomputes the 7d rolling "
+            "average so the public site shows a clean slate."
+        ),
+    )
+    reset.add_argument(
+        "--hours",
+        type=int,
+        default=168,  # 7 days — the full rolling window
+        help="Drop health_logs newer than this many hours (default: 168 = 7d)",
+    )
+    reset.add_argument(
+        "--no-recompute",
+        action="store_true",
+        help="Skip the post-reset availability_pct recompute (let the next health cycle do it)",
+    )
 
     return p
 
@@ -176,6 +197,79 @@ async def _cmd_epg_import(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _cmd_reset_uptime(args: argparse.Namespace) -> int:
+    """Clear stale availability_pct values.
+
+    The 7d rolling average is contaminated by the pre-VLC-UA era of
+    failed probes (HEAD 403s on providers that don't allow HEAD, etc.),
+    which dragged every channel's score down. This subcommand drops
+    the last N hours of health_logs (default: the full 7d window) and
+    re-runs the recompute so the next /api/channels.json shows a
+    clean slate.
+
+    Idempotent. Safe to run multiple times. The streams themselves
+    are untouched; only the history rolls.
+    """
+    db = await open_db()
+    try:
+        async with db.execute(
+            "DELETE FROM health_logs WHERE checked_at >= datetime('now', ?)",
+            (f"-{args.hours} hours",),
+        ) as cur:
+            deleted = cur.rowcount or 0
+        log.info("reset-uptime: dropped %d health_logs rows (last %dh)",
+                 deleted, args.hours)
+
+        if not args.no_recompute:
+            # Mirror the rolling-average SQL from health._recompute_channel_status
+            # but only the availability_pct column. We don't touch
+            # channels.status — that's driven by the streams table, not
+            # by the rolling average.
+            await db.execute(
+                """
+                UPDATE channels
+                SET availability_pct = COALESCE((
+                    SELECT AVG(ok_pct)
+                    FROM (
+                        SELECT
+                            CASE WHEN COUNT(*) = 0 THEN 1.0
+                                 ELSE 1.0 * SUM(h.ok) / COUNT(*)
+                            END AS ok_pct
+                        FROM health_logs h
+                        JOIN streams s ON s.id = h.stream_id
+                        WHERE s.channel_id = channels.id
+                          AND h.checked_at >= datetime('now', '-7 days')
+                        GROUP BY s.id
+                    )
+                ), 1.0) * 100
+                """
+            )
+            await db.execute(
+                "UPDATE channels SET updated_at = datetime('now')"
+            )
+        await db.commit()
+    finally:
+        await db.close()
+
+    if not args.no_recompute:
+        # Republish the catalog so the public site shows the new numbers
+        # without waiting for the next 30m cycle.
+        try:
+            await write_catalog()
+            from .publisher.kv import publish_public_assets
+            pub = await publish_public_assets(force=True)
+            log.info("reset-uptime: republished catalog + KV: %s", pub)
+        except Exception as e:
+            log.warning("reset-uptime: catalog republish failed: %s", e)
+
+    print(json.dumps({
+        "dropped_health_logs": deleted,
+        "window_hours": args.hours,
+        "recomputed": not args.no_recompute,
+    }, indent=2))
+    return 0
+
+
 async def _cmd_stats(args: argparse.Namespace) -> int:
     db = await open_db()
     try:
@@ -214,6 +308,7 @@ _HANDLERS = {
     "publish": _cmd_publish,
     "migrate": _cmd_migrate,
     "epg-import": _cmd_epg_import,
+    "reset-uptime": _cmd_reset_uptime,
     "stats": _cmd_stats,
 }
 
