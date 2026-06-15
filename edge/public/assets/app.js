@@ -5,13 +5,26 @@ const state = {
   catalog: null,
   filter: '',
   category: null,
+  // Category list UI: when false, only the top MAX_VISIBLE_PILLS
+  // (sorted by channel count desc) are shown, with a "Show all"
+  // toggle at the end. The selected category stays visible even
+  // if it falls outside the top-N.
+  showAllCategories: false,
 };
+
+// How many category pills to show by default. Beyond this, the
+// user must click "Show all" — protects the layout from the 80+
+// raw M3U categories that show up before canonicalization, and
+// from the 20+ canonical pills that still add up to a long row
+// on small screens.
+const MAX_VISIBLE_PILLS = 10;
 
 const el = {
   search: document.getElementById('search'),
   categories: document.getElementById('categories'),
   grid: document.getElementById('grid'),
   empty: document.getElementById('empty'),
+  emptyClear: document.getElementById('empty-clear'),
   channelCount: document.getElementById('stat-channel-count'),
   availability: document.getElementById('stat-availability'),
   categoriesCount: document.getElementById('stat-categories'),
@@ -42,25 +55,71 @@ function renderStats() {
 }
 
 function renderCategories() {
-  const cats = state.catalog.categories;
-  const all = [{ name: 'All', slug: null, count: state.catalog.channels.length }, ...cats];
-  el.categories.innerHTML = all.map(c => `
+  // Categories are already sorted alphabetically in the catalog
+  // payload, but for "show by default" we want biggest first.
+  const allCats = [...state.catalog.categories].sort(
+    (a, b) => b.count - a.count
+  );
+  // Always include the active category, even if it's outside the
+  // top-N — so the user can see why they're filtered.
+  let visible;
+  if (state.showAllCategories || allCats.length <= MAX_VISIBLE_PILLS) {
+    visible = allCats;
+  } else {
+    const top = allCats.slice(0, MAX_VISIBLE_PILLS);
+    const activeIsInTop = top.some((c) => c.slug === state.category);
+    if (state.category && !activeIsInTop) {
+      // Show the top-N plus the active one. The active pill
+      // gets a subtle marker so the user knows it's outside the
+      // default set.
+      const active = allCats.find((c) => c.slug === state.category);
+      visible = [...top, { ...active, _outOfDefault: true }];
+    } else {
+      visible = top;
+    }
+  }
+  // Re-sort the visible list alphabetically for the chip row, so
+  // the layout doesn't shuffle when the user toggles a category.
+  visible.sort((a, b) => a.name.localeCompare(b.name));
+
+  const all = [
+    { name: 'All', slug: null, count: state.catalog.channels.length },
+    ...visible,
+  ];
+  // Build the "Show all" / "Show less" toggle if needed.
+  const moreBtn = allCats.length > MAX_VISIBLE_PILLS ? `
+    <button id="cats-toggle"
+            class="cat-pill text-xs px-3 py-1.5 rounded-full border border-gray-700 text-gray-400 hover:border-gray-500 hover:text-gray-200 transition-colors">
+      ${state.showAllCategories ? '‹ Show fewer' : `Show all (${allCats.length}) ›`}
+    </button>
+  ` : '';
+
+  el.categories.innerHTML = all.map((c) => `
     <button data-slug="${c.slug ?? ''}"
             class="cat-pill text-xs px-3 py-1.5 rounded-full border transition-colors ${
               state.category === c.slug
                 ? 'bg-frog border-frog text-gray-900 font-semibold'
                 : 'bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-600'
-            }">
+            }"
+            ${c._outOfDefault ? 'title="Active category — outside the top ' + MAX_VISIBLE_PILLS + '"' : ''}>
       ${escapeHtml(c.name)} <span class="opacity-60">(${c.count})</span>
     </button>
-  `).join('');
-  el.categories.querySelectorAll('.cat-pill').forEach(btn => {
+  `).join('') + moreBtn;
+
+  el.categories.querySelectorAll('.cat-pill').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.category = btn.dataset.slug || null;
       renderCategories();
       renderGrid();
     });
   });
+  const toggle = el.categories.querySelector('#cats-toggle');
+  if (toggle) {
+    toggle.addEventListener('click', () => {
+      state.showAllCategories = !state.showAllCategories;
+      renderCategories();
+    });
+  }
 }
 
 function renderGrid() {
@@ -69,6 +128,16 @@ function renderGrid() {
     if (state.category && ch.category !== state.category) return false;
     if (q && !ch.name.toLowerCase().includes(q)) return false;
     return true;
+  });
+  // Sort by availability desc so the working channels appear at
+  // the top of the grid. The user typically scrolls the first
+  // screenful — this is what they see. Stable secondary sort on
+  // name so the order is deterministic across reloads.
+  filtered.sort((a, b) => {
+    if (b.availability_pct !== a.availability_pct) {
+      return b.availability_pct - a.availability_pct;
+    }
+    return a.name.localeCompare(b.name);
   });
   if (filtered.length === 0) {
     el.grid.innerHTML = '';
@@ -130,6 +199,21 @@ el.search.addEventListener('input', (e) => {
   state.filter = e.target.value;
   renderGrid();
 });
+
+// "Clear filters" button shown in the empty state. Resets the
+// search box, the category filter, and the show-all toggle so the
+// user can recover from a dead-end (e.g. a category that no
+// channels currently match).
+if (el.emptyClear) {
+  el.emptyClear.addEventListener('click', () => {
+    state.filter = '';
+    state.category = null;
+    state.showAllCategories = false;
+    if (el.search) el.search.value = '';
+    renderCategories();
+    renderGrid();
+  });
+}
 
 // Delegated click handler: open the HLS player modal on a plain
 // left-click of a channel card. Modifier-clicks (cmd/ctrl/shift),
