@@ -48,6 +48,7 @@ from ..importers.importer import import_m3u
 from ..publisher.json_catalog import build_catalog, write_catalog
 from ..publisher.kv import publish_public_assets, publish_redirects
 from ..publisher.playlist import render_playlist, write_playlist
+from ..publisher.streams_kv import publish_stream_lists
 from .epg import import_epg_url, render_epg_xml
 
 log = logging.getLogger("treefrog.api")
@@ -289,7 +290,22 @@ async def handle_admin_check_once(_request: web.Request) -> web.Response:
     # lookups on the public site 302 correctly.
     redir = await publish_redirects(force=True)
     pub = await publish_public_assets(force=True)
-    log.info("check-once: KV redirects=%s, public=%s", redir, pub)
+    # Per-channel stream lists for the HLS player. Best-effort — if
+    # the module is mid-deploy, the player will 404 and fall back to
+    # the existing /s/<token> 302 redirect.
+    try:
+        sl = await publish_stream_lists(force=True)
+    except Exception as e:
+        log.warning("stream lists publish failed in check-once: %s", e)
+        sl = {"error": str(e)}
+    try:
+        from ..publisher.epg_kv import publish_nownext
+        nn = await publish_nownext(force=True)
+    except Exception as e:
+        log.warning("epg now/next publish failed in check-once: %s", e)
+        nn = {"error": str(e)}
+    log.info("check-once: KV redirects=%s, public=%s, streams=%s, epg=%s",
+             redir, pub, sl, nn)
     return web.json_response(summary)
 
 
@@ -300,13 +316,45 @@ async def handle_admin_publish(_request: web.Request) -> web.Response:
     # channels whose winner just changed; push them too.
     redir = await publish_redirects(force=True)
     pub = await publish_public_assets(force=True)
-    return web.json_response({"playlist": p, "catalog": c, "kv_redirects": redir, "kv_public": pub})
+    try:
+        sl = await publish_stream_lists(force=True)
+    except Exception as e:
+        log.warning("stream lists publish failed in publish: %s", e)
+        sl = {"error": str(e)}
+    try:
+        from ..publisher.epg_kv import publish_nownext
+        nn = await publish_nownext(force=True)
+    except Exception as e:
+        log.warning("epg now/next publish failed in publish: %s", e)
+        nn = {"error": str(e)}
+    return web.json_response({
+        "playlist": p,
+        "catalog": c,
+        "kv_redirects": redir,
+        "kv_public": pub,
+        "kv_stream_lists": sl,
+        "kv_epg_nownext": nn,
+    })
 
 
 async def handle_admin_rebuild_kv(_request: web.Request) -> web.Response:
     redirects = await publish_redirects(force=True)
     public = await publish_public_assets(force=True)
-    return web.json_response({"redirects": redirects, "public": public})
+    try:
+        sl = await publish_stream_lists(force=True)
+    except Exception as e:
+        sl = {"error": str(e)}
+    try:
+        from ..publisher.epg_kv import publish_nownext
+        nn = await publish_nownext(force=True)
+    except Exception as e:
+        nn = {"error": str(e)}
+    return web.json_response({
+        "redirects": redirects,
+        "public": public,
+        "stream_lists": sl,
+        "epg_nownext": nn,
+    })
 
 
 async def handle_stream_recheck(request: web.Request) -> web.Response:

@@ -22,10 +22,17 @@ Shape (intentionally simple — easy to consume from vanilla JS):
       "category": "news",
       "logo": "http://img/bbc.png",
       "availability_pct": 99.7,
-      "tvg_id": "bbcnews.uk"
+      "tvg_id": "bbcnews.uk",
+      "token": "a1b2c3d4..."        // null if no online stream
     }
   ]
 }
+
+The `token` field is the redirect token under which the winning stream URL
+(plus the full failover list at /api/streams/<token>) lives in KV. The
+public HLS player uses it to start playback without a follow-up redirect
+lookup. Channels with no online stream have `token: null` and the player
+falls back to the existing detail page.
 """
 from __future__ import annotations
 
@@ -45,11 +52,17 @@ async def build_catalog() -> dict:
     try:
         async with db.execute(
             """
-            SELECT id, display_name, tvg_id, group_title, logo_url,
-                   availability_pct
-            FROM channels
-            WHERE status = 'online'
-            ORDER BY group_title, display_name
+            SELECT c.id, c.display_name, c.tvg_id, c.group_title, c.logo_url,
+                   c.availability_pct,
+                   (SELECT r.token
+                    FROM redirects r
+                    JOIN streams s ON s.id = r.stream_id
+                    WHERE r.channel_id = c.id
+                      AND s.status     = 'online'
+                    LIMIT 1)          AS token
+            FROM channels c
+            WHERE c.status = 'online'
+            ORDER BY c.group_title, c.display_name
             """
         ) as cur:
             channels = await cur.fetchall()
@@ -103,6 +116,7 @@ async def build_catalog() -> dict:
                 "logo": c["logo_url"],
                 "availability_pct": round(float(c["availability_pct"] or 0), 1),
                 "tvg_id": c["tvg_id"],
+                "token": c["token"],
             }
             for c in channels
         ]

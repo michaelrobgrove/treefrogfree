@@ -25,6 +25,7 @@ from .health import run_health_cycle
 from .publisher.json_catalog import write_catalog
 from .publisher.kv import publish_public_assets, publish_redirects
 from .publisher.playlist import write_playlist
+from .publisher.streams_kv import publish_stream_lists
 
 log = logging.getLogger("treefrog.scheduler")
 
@@ -71,6 +72,15 @@ async def _tick() -> None:
     except Exception:
         log.exception("KV public assets publish failed; continuing")
 
+    # Per-channel stream lists for the HLS web player. The /s/<token>
+    # redirect already points at one URL; the player wants the full
+    # ordered list so it can fail over when a source stalls.
+    try:
+        sl_summary = await publish_stream_lists()
+        log.info("KV stream lists: %s", sl_summary)
+    except Exception:
+        log.exception("KV stream lists publish failed; continuing")
+
     # EPG refresh (every 6h, see plan.md §10.1). Cheap to do on every cycle
     # since we re-import only if cache is stale — but for now skip the
     # staleness check and just do it on a slow timer.
@@ -80,6 +90,14 @@ async def _tick() -> None:
             await import_epg_default()
         except Exception:
             log.exception("EPG refresh failed; continuing")
+        # Push now/next JSON to KV so the player's "On now" block
+        # reflects the freshly imported XMLTV on the next read.
+        try:
+            from .publisher.epg_kv import publish_nownext
+            nn = await publish_nownext()
+            log.info("KV EPG now/next: %s", nn)
+        except Exception:
+            log.exception("KV EPG now/next publish failed; continuing")
 
 
 def _should_refresh_epg() -> bool:

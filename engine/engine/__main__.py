@@ -6,6 +6,8 @@ Usage:
     python -m engine check-once         # run a single health cycle
     python -m engine publish            # re-render playlist + catalog only
     python -m engine migrate            # apply DB migrations and exit
+    python -m engine epg-import --url <xmltv-url>  # one-shot XMLTV import
+    python -m engine stats              # print summary stats
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ import logging
 import sys
 from pathlib import Path
 
+from .admin.epg import import_epg_url
 from .config import CONFIG
 from .db import open_db, run_migrations
 from .health import run_health_cycle
@@ -23,6 +26,7 @@ from .importers.importer import import_m3u
 from .publisher.json_catalog import write_catalog
 from .publisher.kv import publish_public_assets, publish_redirects
 from .publisher.playlist import write_playlist
+from .publisher.streams_kv import publish_stream_lists
 
 log = logging.getLogger("treefrog")
 
@@ -50,6 +54,17 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("check-once", help="Run a single health-check cycle")
     sub.add_parser("publish", help="Re-render playlist + catalog JSON only")
     sub.add_parser("migrate", help="Apply pending DB migrations and exit")
+
+    epg_import = sub.add_parser(
+        "epg-import",
+        help="One-shot XMLTV import from a URL (gzipped XMLTV is auto-detected)",
+    )
+    epg_import.add_argument("--url", required=True, help="URL to fetch the XMLTV from")
+    epg_import.add_argument(
+        "--publish-nownext",
+        action="store_true",
+        help="After import, also publish epg:nownext:<tvg_id> JSON to KV",
+    )
 
     stats = sub.add_parser("stats", help="Print summary stats and exit")
     stats.add_argument("--json", action="store_true", help="Output JSON instead of text")
@@ -98,6 +113,21 @@ async def _cmd_publish(_args: argparse.Namespace) -> int:
     # push them so /s/<token> lookups work immediately.
     redir = await publish_redirects(force=True)
     pub = await publish_public_assets(force=True)
+    # Also push the per-channel stream lists the HLS player needs.
+    # Best-effort: if the module isn't importable yet (mid-deploy),
+    # the player just sees 404s on /api/streams/<token> and falls back
+    # to the existing /s/<token> 302 redirect.
+    try:
+        sl = await publish_stream_lists(force=True)
+        print(f"kv stream lists: {sl}")
+    except Exception as e:
+        print(f"kv stream lists: SKIPPED ({type(e).__name__}: {e})")
+    try:
+        from .publisher.epg_kv import publish_nownext
+        nn = await publish_nownext(force=True)
+        print(f"kv epg now/next: {nn}")
+    except Exception as e:
+        print(f"kv epg now/next: SKIPPED ({type(e).__name__}: {e})")
     print(f"playlist: {p1}")
     print(f"catalog:  {p2}")
     print(f"kv redirects: {redir}")
@@ -112,6 +142,37 @@ async def _cmd_migrate(_args: argparse.Namespace) -> int:
     finally:
         await db.close()
     print(f"migrations applied; db at {CONFIG.db_path}")
+    return 0
+
+
+async def _cmd_epg_import(args: argparse.Namespace) -> int:
+    """One-shot XMLTV import. Useful when the admin UI isn't reachable
+    (e.g. before the bind-mount is in place) or for scripting.
+
+    Examples:
+        python -m engine epg-import --url https://example.com/guide.xml.gz
+        python -m engine epg-import --url https://example.com/guide.xml.gz --publish-nownext
+
+    With --publish-nownext, also pushes per-tvg-id "on now" / "up next"
+    JSON blobs to KV so the HLS player's EPG panel lights up immediately.
+    """
+    print(f"epg-import: fetching {args.url} ...", flush=True)
+    try:
+        summary = await import_epg_url(args.url)
+    except Exception as e:
+        log.exception("EPG import failed")
+        print(f"epg-import: FAILED: {type(e).__name__}: {e}")
+        return 1
+    print(json.dumps(summary, indent=2))
+    if args.publish_nownext:
+        try:
+            from .publisher.epg_kv import publish_nownext
+            nn = await publish_nownext(force=True)
+            print(json.dumps(nn, indent=2))
+        except Exception as e:
+            log.exception("publish_nownext failed")
+            print(f"publish_nownext: FAILED: {type(e).__name__}: {e}")
+            # Don't return 1 — the import itself succeeded; KV is best-effort.
     return 0
 
 
@@ -152,6 +213,7 @@ _HANDLERS = {
     "check-once": _cmd_check_once,
     "publish": _cmd_publish,
     "migrate": _cmd_migrate,
+    "epg-import": _cmd_epg_import,
     "stats": _cmd_stats,
 }
 
