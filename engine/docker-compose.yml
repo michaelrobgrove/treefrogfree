@@ -15,5 +15,12 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
-    # The admin API is intentionally NOT exposed to the host network.
-    # Access goes via Tailscale or a Cloudflare Tunnel (see plan.md §11).
+    # Bind the admin API to 127.0.0.1 on the HOST only. It's still not
+    # reachable from the public internet — only from the VPS host
+    # itself, and from Tailscale devices that route to this host's
+    # Tailscale IP. No other interface is exposed.
+    #
+    # If you don't need Tailscale access (e.g. you do everything from
+    # the VPS host via `docker exec`), comment this block out.
+    ports:
+      - "127.0.0.1:8000:8000"
