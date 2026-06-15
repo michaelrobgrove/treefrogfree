@@ -7,6 +7,7 @@ off of it.
 """
 from engine.consolidator import (
     canonical_category,
+    canonical_channel_name,
     candidate_matches,
     group_brand_name,
     group_slug,
@@ -224,3 +225,47 @@ class TestCanonicalCategory:
         from engine.consolidator import group_slug
         assert group_slug(canonical_category("Animation Classics")) == "animation"
         assert group_slug(canonical_category("Local News")) == "news"
+
+
+class TestCanonicalChannelName:
+    """Operator override: region-flavored variants of the same network
+    should collapse to one channels row with multiple stream URLs.
+    Example: 'PBS Kids Alaska' + 'PBS Kids East' → 'pbs kids'.
+
+    The base normalizer can't catch 'Alaska' because that's a real
+    word, not a quality tag. The override map catches it explicitly.
+    """
+
+    def test_pbs_kids_regions_collapse(self):
+        # The original ask from the operator.
+        assert canonical_channel_name("PBS Kids Alaska") == "pbs kids"
+        assert canonical_channel_name("PBS Kids East") == "pbs kids"
+        assert canonical_channel_name("PBS Kids West") == "pbs kids"
+        assert canonical_channel_name("PBS Kids") == "pbs kids"  # no-op for the canonical
+        assert canonical_channel_name("PBS Kids Hawaii") == "pbs kids"
+
+    def test_case_insensitive(self):
+        # Normalizer drops case before the override lookup.
+        assert canonical_channel_name("pbs kids ALASKA") == "pbs kids"
+        assert canonical_channel_name("PBS KIDS East") == "pbs kids"
+
+    def test_punctuation_dropped(self):
+        assert canonical_channel_name("PBS Kids: Alaska Edition") == "pbs kids"
+        assert canonical_channel_name("PBS Kids — East Feed") == "pbs kids"
+
+    def test_unrelated_channel_passthrough(self):
+        # A channel that has no override should fall through to
+        # the normalizer — the override never widens the match.
+        assert canonical_channel_name("BBC News") == "bbc news"
+        assert canonical_channel_name("CNN") == "cnn"
+        assert canonical_channel_name("ESPN 2") == "espn 2"
+
+    def test_quality_suffixes_still_stripped(self):
+        # The override is layered on top of the normalizer's suffix
+        # strip. "PBS Kids East HD" — 'east' strips to 'pbs kids',
+        # then the override is a no-op because we already match.
+        assert canonical_channel_name("PBS Kids East HD") == "pbs kids"
+
+    def test_empty_input(self):
+        assert canonical_channel_name("") == ""
+        assert canonical_channel_name("   ") == ""

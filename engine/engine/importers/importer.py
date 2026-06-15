@@ -14,7 +14,7 @@ import aiohttp
 from ..db import open_db, run_migrations
 from ..models import M3UEntry
 from .m3u import parse_file, parse_url, looks_like_url
-from ..consolidator import normalize
+from ..consolidator import canonical_channel_name, normalize
 
 log = logging.getLogger("treefrog.importer")
 
@@ -122,7 +122,13 @@ async def _upsert_batch(
 
     for entry in entries:
         try:
-            norm = normalize(entry.name)
+            # `canonical_channel_name` first applies the operator's
+            # multi-region override (e.g. "PBS Kids Alaska" → "pbs kids"),
+            # then falls through to the regular normalizer. Two
+            # region-flavored variants of the same network collapse
+            # into one channels row with multiple stream URLs —
+            # the failover list the player already walks.
+            norm = canonical_channel_name(entry.name)
             if not norm:
                 duplicates += 1
                 continue

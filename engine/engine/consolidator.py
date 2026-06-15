@@ -214,6 +214,59 @@ def canonical_category(group_title: str) -> str:
     return g
 
 
+# ── Manual multi-region channel consolidation ──────────────────────────
+# Some channels are region-flavored variants of a single logical
+# network. Examples:
+#   - "PBS Kids Alaska" + "PBS Kids East"  →  "PBS Kids"
+#   - "BBC One London" + "BBC One Scotland" →  "BBC One"  (probably)
+#   - "ESPN East" + "ESPN West"             →  "ESPN"
+#
+# These can't be caught by a generic suffix-stripper because
+# "alaska" is a real word, not a quality tag. Operators maintain
+# this list manually — the M3U importer's `is_same_channel()`
+# consults it.
+#
+# The map is normalized -> canonical normalized form. After lookup,
+# the importer uses the canonical form to look up an existing
+# channels row, so all region variants collide on the same id.
+_MULTI_REGION_OVERRIDE: dict[str, str] = {
+    "pbs kids alaska": "pbs kids",
+    "pbs kids east":   "pbs kids",
+    "pbs kids west":   "pbs kids",
+    "pbs kids hawaii": "pbs kids",
+    # Add more here as the operator notices regional splits.
+}
+
+
+def canonical_channel_name(name: str) -> str:
+    """Operator override: return the canonical normalized form of a
+    channel name. If a multi-region rule applies, return the
+    target; otherwise pass through to the regular normalizer.
+
+    Used by the M3U importer so 'PBS Kids Alaska' and 'PBS Kids East'
+    both hash to the same channels.normalized_name and merge into
+    one row with multiple stream URLs (failover).
+
+    Match strategy: a normalized name is collapsed to the override
+    target if it either equals an override key or starts with one
+    followed by a word boundary (whitespace). "PBS Kids Alaska" →
+    "pbs kids"; "PBS Kids Alaska HD" → "pbs kids" (the trailing
+    'hd' is a quality suffix the normalizer would have stripped,
+    but if it didn't, we still want the override to win).
+    """
+    n = normalize(name)
+    if not n:
+        return n
+    if n in _MULTI_REGION_OVERRIDE:
+        return _MULTI_REGION_OVERRIDE[n]
+    # Prefix match: 'pbs kids alaska edition' starts with
+    # 'pbs kids alaska' → collapse to 'pbs kids'.
+    for key, target in _MULTI_REGION_OVERRIDE.items():
+        if n.startswith(key + " "):
+            return target
+    return n
+
+
 def candidate_matches(
     query: str, candidates: Iterable[str], limit: int = 20
 ) -> list[tuple[str, int]]:
