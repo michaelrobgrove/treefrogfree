@@ -19,7 +19,20 @@
  *  *creates* a Gold Panel account. If the operator wants
  *  to seed accounts by hand, they can pre-populate an
  *  Account record in KV with the right panel_username +
- *  password_auth hash. */
+ *  password_auth hash.
+ *
+ *  Staleness check: if the customer hasn't signed in for
+ *  30+ days (or has never signed in), we call Gold Panel
+ *  to refresh `expires_at` before minting the session. This
+ *  keeps the dashboard accurate without an API call on
+ *  every sign-in.
+ *
+ *  Password-change handling: customers cannot change their
+ *  Gold Panel password themselves (only the operator can).
+ *  If the local hash doesn't match what they typed, we try
+ *  the Gold Panel fallback. If that also fails, we deny
+ *  with a "contact support" message — never a silent fall-
+ *  through to a stale local record. */
 
 import { getAccountByPanelUsername, putAccount, type Account, type ContactHandles } from "../../_lib/kv";
 import { getDeviceInfo } from "../../_lib/goldpanel";
@@ -32,6 +45,41 @@ interface PagesContext {
 interface LoginBody {
     username: string;
     password: string;
+}
+
+const STALENESS_MS = 30 * 24 * 60 * 60 * 1000;  // 30 days
+
+/** Returns true if the account's expiry is "stale enough" to
+ *  warrant a Gold Panel refresh on sign-in. We refresh when
+ *  the customer has never logged in before, or when their
+ *  last login was more than 30 days ago. */
+function isStale(acct: Account | null): boolean {
+    if (!acct) return true;
+    if (!acct.last_login_at) return true;
+    const last = Date.parse(acct.last_login_at);
+    if (isNaN(last)) return true;
+    return (Date.now() - last) > STALENESS_MS;
+}
+
+/** Refresh `expires_at` from Gold Panel. Best-effort: any
+ *  failure is logged but doesn't block the sign-in. The
+ *  customer is told their dashboard expires date is best-
+ *  effort. */
+async function refreshExpiresAt(
+    kv: KVNamespace,
+    acct: Account,
+    username: string,
+    password: string,
+): Promise<void> {
+    try {
+        const info = await getDeviceInfo({ username, password });
+        if (info.expire) {
+            acct.expires_at = info.expire;
+            await putAccount(kv, acct);
+        }
+    } catch (e) {
+        console.warn("login: stale-refresh getDeviceInfo failed:", (e as Error).message);
+    }
 }
 
 export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
@@ -54,23 +102,29 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
     // 1. Look up locally by Gold Panel username.
     let acct = await getAccountByPanelUsername(kv, username);
 
-    // 2. If we have a local record, verify the hash. If it
-    //    matches, sign in. If it doesn't match, try the
-    //    Gold Panel fallback (the customer may have had
-    //    their panel password reset by the operator).
+    // 2. If we have a local record, verify the hash.
     if (acct && acct.password_auth) {
         const ok = await verifyPassword(password, acct.password_auth);
         if (ok) {
-            const { cookie } = await createSession(kv, acct.paypal_order_id);
+            // 30-day staleness: if the customer hasn't
+            // signed in for a while, refresh expires_at
+            // from the panel before signing them in. The
+            // staleness refresh is best-effort and
+            // never blocks the sign-in.
+            if (isStale(acct)) {
+                await refreshExpiresAt(kv, acct, username, password);
+            }
+            acct.last_login_at = new Date().toISOString();
+            await putAccount(kv, acct);
+            const { cookie } = await createSession(kv, acct.paypal_order_id, ctx.request.url);
             return sessionResponse(cookie);
         }
-        // Local hash miss — fall through to Gold Panel check.
+        // Local hash miss — fall through to the Gold Panel
+        // check below. This is the "operator reset the
+        // password" case.
     }
 
-    // 3. Verify against Gold Panel directly. If it works,
-    //    either refresh the local hash (acct exists) or
-    //    create a new local record (existing Gold Panel
-    //    customer, first sign-in to the site).
+    // 3. Verify against Gold Panel directly.
     let info: any;
     try {
         info = await getDeviceInfo({ username, password });
@@ -80,7 +134,14 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
         if (!acct) {
             await hashPassword(password);
         }
-        return json({ error: "Invalid username or password" }, 401);
+        // We never silently fall through to a stale local
+        // record. If both the local hash and the panel say
+        // "no", deny. Phrase the response so the customer
+        // knows to contact support for password-reset help
+        // (the operator can reset their Gold Panel line).
+        return json({
+            error: "Invalid username or password. If you recently had your account password reset, please contact support.",
+        }, 401);
     }
 
     const newAuth = await hashPassword(password);
@@ -94,21 +155,17 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
         acct.panel_password_ct = newCt;
         acct.panel_user_id = String(info.user_id || acct.panel_user_id || "");
         acct.panel_username = username;
-        // If the panel still says the line is alive, mark
-        // the local status as active; otherwise leave it
-        // alone (admin may have explicitly expired it).
-        if (info.expire && !acct.expires_at) {
-            acct.expires_at = info.expire;
-        }
-        // Stash the login time. Step 3 will add the
-        // 30-day-staleness refresh logic on top of this.
+        // Pull the live expiry — the operator may have
+        // extended or disabled the line, and we want the
+        // dashboard to reflect the current state.
+        if (info.expire) acct.expires_at = info.expire;
         acct.last_login_at = new Date().toISOString();
         await putAccount(kv, acct);
-        const { cookie } = await createSession(kv, acct.paypal_order_id);
+        const { cookie } = await createSession(kv, acct.paypal_order_id, ctx.request.url);
         return sessionResponse(cookie);
     }
 
-    // Brand-new local record for an existing Gold Panel
+    // 4. Brand-new local record for an existing Gold Panel
     // customer. We don't have a PayPal order id, so we
     // generate a stable synthetic one from the panel
     // user_id. This lets the rest of the system (which
@@ -130,13 +187,10 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
         password_auth: newAuth,
         // The plan is technically unknown for an existing
         // customer; default to 1 month so renewals still
-        // work via the 1-month rate. The operator can fix
-        // this if it matters.
+        // work via the 1-month rate. Step 4 (bouquet
+        // matching) will overwrite this once we can compare
+        // info.bouquet against our 4 known IDs.
         plan_months: 1,
-        // Same for bouquet — leave "us_wo" as a placeholder.
-        // Step 4 (bouquet matching) will overwrite this on
-        // first sign-in once we can compare info.bouquet
-        // against our 4 known IDs.
         bouquet: "us_wo",
         panel_bouquet_id: "",
         created_at: new Date().toISOString(),
@@ -147,7 +201,7 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
         cancel_at_period_end: false,
     };
     await putAccount(kv, newAcct);
-    const { cookie } = await createSession(kv, newAcct.paypal_order_id);
+    const { cookie } = await createSession(kv, newAcct.paypal_order_id, ctx.request.url);
     return sessionResponse(cookie);
 };
 

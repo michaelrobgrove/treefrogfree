@@ -34,13 +34,14 @@
         <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-8">
             <h1 class="text-2xl font-bold mb-2 text-center">Sign in</h1>
             <p class="text-sm text-gray-400 text-center mb-6">
-                Use the email &amp; password from your welcome email.
+                Enter your Tree Frog Plus username and password. If you do not know them, check for a welcome email from us or contact support.
             </p>
 
             <form id="login-form" autocomplete="on" novalidate>
                 <label class="block mb-4">
-                    <span class="text-sm text-gray-300 mb-1 block">Email</span>
-                    <input type="email" name="email" required autocomplete="username"
+                    <span class="text-sm text-gray-300 mb-1 block">Username</span>
+                    <input type="text" name="username" required autocomplete="username"
+                           autocapitalize="none" spellcheck="false"
                            class="w-full bg-gray-900 border border-gray-700 text-white placeholder-gray-500 rounded-lg px-3 py-2.5 tf-focus"/>
                 </label>
                 <label class="block mb-5">
@@ -56,7 +57,7 @@
             </form>
 
             <p class="text-xs text-gray-500 text-center mt-6">
-                Forgot your password? Reply to your welcome email &mdash; we'll send you a new one.
+                Passwords can only be reset by our support team. Reply to your welcome email or contact support and we'll get you back in.
             </p>
         </div>
 
@@ -90,7 +91,7 @@
             const data = await window.tf.api("/api/auth/login", {
                 method: "POST",
                 body: {
-                    email:    String(fd.get("email")    || "").trim().toLowerCase(),
+                    username: String(fd.get("username") || "").trim(),
                     password: String(fd.get("password") || ""),
                 },
             });

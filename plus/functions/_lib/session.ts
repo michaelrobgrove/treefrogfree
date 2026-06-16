@@ -99,28 +99,65 @@ function readCookie(req: Request): string | null {
     return null;
 }
 
-/** Build a Set-Cookie header value for a fresh session. */
-export function buildSessionCookie(token: string, maxAge: number): string {
-    return [
+/** Build a Set-Cookie header value for a fresh session.
+ *
+ *  Cookie domain policy: we want one session to work on both
+ *  `tfplus.stream` and any subdomain (currently just
+ *  `beta.tfplus.stream`). Setting `Domain=.tfplus.stream` is
+ *  what makes that work — the leading dot is the historical
+ *  form and modern browsers accept it.
+ *
+ *  On the Pages preview host (`treefrogplus.pages.dev`) we
+ *  DON'T set Domain, so the browser uses the request host
+ *  and the cookie is scoped to the preview. This also means
+ *  preview signins don't leak into the real domain (good
+ *  for testing) and the real domain doesn't accept a cookie
+ *  that was minted under a different host. */
+export function buildSessionCookie(
+    token: string,
+    maxAge: number,
+    requestUrl: string,
+): string {
+    const parts = [
         `${COOKIE_NAME}=${encodeURIComponent(token)}`,
         `HttpOnly`,
         `Secure`,
         `SameSite=Lax`,
         `Path=/`,
         `Max-Age=${maxAge}`,
-    ].join("; ");
+    ];
+    const host = (() => {
+        try { return new URL(requestUrl).hostname.toLowerCase(); }
+        catch (e) { return ""; }
+    })();
+    // Only attach Domain=.tfplus.stream on the real zone.
+    // treefrogplus.pages.dev and any other host skip it.
+    if (host === "tfplus.stream" || host.endsWith(".tfplus.stream")) {
+        parts.push(`Domain=.tfplus.stream`);
+    }
+    return parts.join("; ");
 }
 
-/** Build a Set-Cookie that clears the session. */
-export function clearSessionCookie(): string {
-    return [
+/** Build a Set-Cookie that clears the session. The clear
+ *  cookie must include the same Domain as the original so
+ *  the browser can find and drop it. */
+export function clearSessionCookie(requestUrl: string): string {
+    const parts = [
         `${COOKIE_NAME}=`,
         `HttpOnly`,
         `Secure`,
         `SameSite=Lax`,
         `Path=/`,
         `Max-Age=0`,
-    ].join("; ");
+    ];
+    const host = (() => {
+        try { return new URL(requestUrl).hostname.toLowerCase(); }
+        catch (e) { return ""; }
+    })();
+    if (host === "tfplus.stream" || host.endsWith(".tfplus.stream")) {
+        parts.push(`Domain=.tfplus.stream`);
+    }
+    return parts.join("; ");
 }
 
 /** Read the session, look up the account, return both. */
@@ -143,10 +180,13 @@ export async function getSessionAccount(
 }
 
 /** Issue a fresh session for the given account. Returns the token
- *  and the Set-Cookie header the caller should attach. */
+ *  and the Set-Cookie header the caller should attach. The
+ *  requestUrl is used to decide whether to set Domain=.tfplus.stream
+ *  (yes on the real zone, no on the Pages preview host). */
 export async function createSession(
     kv: KVNamespace,
     orderId: string,
+    requestUrl: string,
 ): Promise<{ token: string; cookie: string }> {
     const token = randomToken(32);
     const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SEC;
@@ -154,12 +194,12 @@ export async function createSession(
     await kv.put(`session:${token}`, JSON.stringify(session), {
         expirationTtl: SESSION_TTL_SEC,
     });
-    return { token, cookie: buildSessionCookie(token, SESSION_TTL_SEC) };
+    return { token, cookie: buildSessionCookie(token, SESSION_TTL_SEC, requestUrl) };
 }
 
 /** Delete the current session and return the clearing cookie. */
 export async function destroySession(req: Request, kv: KVNamespace): Promise<string> {
     const token = readCookie(req);
     if (token) await kv.delete(`session:${token}`);
-    return clearSessionCookie();
+    return clearSessionCookie(req.url);
 }
