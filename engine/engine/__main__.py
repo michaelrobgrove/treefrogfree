@@ -53,6 +53,17 @@ def _build_parser() -> argparse.ArgumentParser:
     seed = sub.add_parser("seed", help="Import an M3U from URL or file path")
     seed.add_argument("--m3u", required=True, help="URL or local file path")
     seed.add_argument("--label", default=None, help="Optional source label")
+    seed.add_argument(
+        "--disable",
+        action="store_true",
+        help=(
+            "Import streams with status='disabled' (warm backup). They are "
+            "kept in the DB but never serve as winners; the pruner leaves "
+            "them alone. Use this for backup M3U sources you want available "
+            "if the primary dies (e.g. the distrotv-proxy container as a "
+            "spare for the BuddyChewChew DistroTV M3U)."
+        ),
+    )
 
     sub.add_parser("check-once", help="Run a single health-check cycle")
     sub.add_parser("publish", help="Re-render playlist + catalog JSON only")
@@ -123,13 +134,20 @@ async def _cmd_serve(_args: argparse.Namespace) -> int:
 
 
 async def _cmd_seed(args: argparse.Namespace) -> int:
-    summary = await import_m3u(args.m3u, source_label=args.label)
+    summary = await import_m3u(
+        args.m3u, source_label=args.label, disabled=args.disable
+    )
     # Republish to disk and KV so the public site reflects the new
     # import immediately, not 30 minutes later at the next health cycle.
     # write_playlist mints redirect tokens for newly-online channels;
     # publish_redirects then pushes those tokens to KV so /s/<token>
     # 302s resolve; publish_public_assets pushes the catalog/playlist
     # snapshot.
+    # When importing as disabled backup, there are no online channels
+    # to mint tokens for, so the republish is mostly a no-op for
+    # those streams — but we still call it so the disabled streams
+    # appear in the per-channel stream list and the engine sees a
+    # consistent state.
     await write_playlist()
     await write_catalog()
     redir = await publish_redirects(force=True)

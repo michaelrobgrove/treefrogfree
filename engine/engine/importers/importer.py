@@ -24,10 +24,23 @@ async def import_m3u(
     *,
     source_label: Optional[str] = None,
     http_session: Optional[aiohttp.ClientSession] = None,
+    disabled: bool = False,
 ) -> dict:
     """Import an M3U from a URL or local file path.
 
-    Returns a summary dict: {channels_new, streams_new, duplicates, total}.
+    Args:
+        source: URL or local file path.
+        source_label: Friendly label (stored in streams.source_label).
+        http_session: Optional aiohttp session to share with the caller.
+        disabled: If True, the imported streams are inserted with
+            status='disabled' instead of 'unknown'. The streams are
+            kept in the DB as a warm backup — they don't serve as
+            winners in the catalog (only 'online' streams do), and
+            the pruner leaves them alone (it only sweeps 'offline'
+            labels, not 'disabled' ones). Use this for backup M3U
+            sources you want available if the primary dies.
+
+    Returns a summary dict: {channels_new, streams_new, duplicates, total, disabled}.
     """
     if looks_like_url(source):
         iterator_factory = lambda s: parse_url(source, session=s)  # noqa: E731
@@ -55,6 +68,7 @@ async def import_m3u(
             "duplicates": 0,
             "total": 0,
             "errors": 0,
+            "disabled": disabled,
         }
 
         # We stream entries and batch inserts in chunks of 200. SQLite's
@@ -66,17 +80,25 @@ async def import_m3u(
             summary["total"] += 1
             batch.append(entry)
             if len(batch) >= BATCH:
-                counts = await _upsert_batch(db, batch, source_label)
+                counts = await _upsert_batch(db, batch, source_label, disabled=disabled)
                 summary["channels_new"] += counts["channels_new"]
                 summary["streams_new"] += counts["streams_new"]
                 summary["duplicates"] += counts["duplicates"]
                 batch.clear()
 
         if batch:
-            counts = await _upsert_batch(db, batch, source_label)
+            counts = await _upsert_batch(db, batch, source_label, disabled=disabled)
             summary["channels_new"] += counts["channels_new"]
             summary["streams_new"] += counts["streams_new"]
             summary["duplicates"] += counts["duplicates"]
+
+        # When importing as disabled, the note explicitly says so —
+        # the operator can grep the imports table for "imported as
+        # disabled backup" to find these rows quickly.
+        if disabled:
+            note = f"total entries seen: {summary['total']} (imported as disabled backup)"
+        else:
+            note = f"total entries seen: {summary['total']}"
 
         await db.execute(
             """
@@ -90,7 +112,7 @@ async def import_m3u(
                 summary["channels_new"],
                 summary["streams_new"],
                 summary["duplicates"],
-                f"total entries seen: {summary['total']}",
+                note,
                 import_id,
             ),
         )
@@ -110,15 +132,24 @@ async def import_m3u(
 
 
 async def _upsert_batch(
-    db, entries: list[M3UEntry], source_label: Optional[str]
+    db, entries: list[M3UEntry], source_label: Optional[str], *, disabled: bool = False
 ) -> dict:
     """Insert a batch of M3U entries, consolidating by tvg-id → normalized name.
 
     Returns counts of new channels, new streams, and duplicates.
+
+    When `disabled=True`, newly-inserted streams are marked
+    status='disabled' instead of 'unknown'. Disabled streams are
+    kept as a warm backup in the DB but never serve as winners
+    (only status='online' streams win). The pruner leaves them
+    alone because it only sweeps labels where all streams are
+    'offline' — a label with all-disabled streams survives.
     """
     channels_new = 0
     streams_new = 0
     duplicates = 0
+
+    initial_status = "disabled" if disabled else "unknown"
 
     for entry in entries:
         try:
@@ -191,9 +222,9 @@ async def _upsert_batch(
                 """
                 INSERT OR IGNORE INTO streams
                     (channel_id, source_url, source_label, priority, status)
-                VALUES (?, ?, ?, 100, 'unknown')
+                VALUES (?, ?, ?, 100, ?)
                 """,
-                (channel_id, entry.url, source_label),
+                (channel_id, entry.url, source_label, initial_status),
             )
             if cur.lastrowid:
                 streams_new += 1

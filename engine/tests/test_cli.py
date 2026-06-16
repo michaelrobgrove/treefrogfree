@@ -52,6 +52,7 @@ def test_subcommands_known():
     cases = [
         (["serve"], "serve"),
         (["seed", "--m3u", "https://example.com/x.m3u"], "seed"),
+        (["seed", "--m3u", "https://example.com/x.m3u", "--disable"], "seed"),
         (["check-once"], "check-once"),
         (["publish"], "publish"),
         (["migrate"], "migrate"),
@@ -527,6 +528,92 @@ async def test_cmd_prune_republishes_on_real_deletion(monkeypatch):
     assert rc == 0
     assert calls == {"publish_public": 1, "publish_redirects": 1, "playlist": 1, "catalog": 1}, (
         f"real prune must republish all four; got {calls}"
+    )
+
+
+def test_seed_disable_flag_passes_disabled_to_importer(monkeypatch, caplog):
+    """`python -m engine seed --m3u URL --label L --disable` must call
+    `import_m3u(..., disabled=True)` so the imported streams are
+    inserted as status='disabled' (warm backup). This is what lets
+    the distrotv-proxy container be imported as a backup without
+    serving traffic or getting pruned.
+    """
+    import logging
+    from engine import __main__ as cli
+
+    captured = {"disabled": None, "called": 0}
+
+    async def _fake_import_m3u(*_a, **kw):
+        captured["called"] += 1
+        captured["disabled"] = kw.get("disabled")
+        captured["source_label"] = kw.get("source_label")
+        return {
+            "channels_new": 1, "streams_new": 1, "duplicates": 0,
+            "total": 1, "errors": 0, "disabled": kw.get("disabled", False),
+        }
+
+    async def _noop(*_a, **_kw):
+        return None
+
+    monkeypatch.setattr(cli, "import_m3u", _fake_import_m3u)
+    monkeypatch.setattr(cli, "write_playlist", _noop)
+    monkeypatch.setattr(cli, "write_catalog", _noop)
+    monkeypatch.setattr(cli, "publish_public_assets", _noop)
+    monkeypatch.setattr(cli, "publish_redirects", _noop)
+
+    with caplog.at_level(logging.INFO, logger="treefrog"):
+        rc = asyncio.run(cli._cmd_seed(
+            cli._build_parser().parse_args(
+                ["seed", "--m3u", "https://example.com/x.m3u",
+                 "--label", "Backup", "--disable"]
+            )
+        ))
+
+    assert rc == 0
+    assert captured["called"] == 1
+    assert captured["disabled"] is True, (
+        "seed --disable must pass disabled=True to import_m3u so streams "
+        "are inserted as status='disabled' (not status='unknown')"
+    )
+    assert captured["source_label"] == "Backup"
+
+
+def test_seed_default_does_not_disable(monkeypatch):
+    """Sanity: `seed` without `--disable` must pass disabled=False to
+    the importer. Otherwise every import would be a backup and
+    nothing would ever go live."""
+    from engine import __main__ as cli
+
+    captured = {"disabled": None, "called": 0}
+
+    async def _fake_import_m3u(*_a, **kw):
+        captured["called"] += 1
+        captured["disabled"] = kw.get("disabled")
+        return {
+            "channels_new": 1, "streams_new": 1, "duplicates": 0,
+            "total": 1, "errors": 0, "disabled": kw.get("disabled", False),
+        }
+
+    async def _noop(*_a, **_kw):
+        return None
+
+    monkeypatch.setattr(cli, "import_m3u", _fake_import_m3u)
+    monkeypatch.setattr(cli, "write_playlist", _noop)
+    monkeypatch.setattr(cli, "write_catalog", _noop)
+    monkeypatch.setattr(cli, "publish_public_assets", _noop)
+    monkeypatch.setattr(cli, "publish_redirects", _noop)
+
+    rc = asyncio.run(cli._cmd_seed(
+        cli._build_parser().parse_args(
+            ["seed", "--m3u", "https://example.com/x.m3u", "--label", "Active"]
+        )
+    ))
+
+    assert rc == 0
+    assert captured["called"] == 1
+    assert captured["disabled"] is False, (
+        "seed without --disable must NOT set disabled=True — that would "
+        "make every import a backup and no streams would ever go live"
     )
 
 

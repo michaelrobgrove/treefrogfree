@@ -429,7 +429,8 @@ async def test_idempotent_on_second_call(seeded):
 @pytest.mark.asyncio
 async def test_empty_db_is_noop(tmp_path):
     """A brand-new engine DB with no streams at all should be a clean
-    no-op — scanned_labels=0, dead_labels=0, pruned=[]."""
+    no-op — scanned_labels=0, dead_labels=0, empty_labels=0, pruned=[],
+    empties=[]."""
     import aiosqlite
     db_path = tmp_path / "empty.db"
     conn = sqlite3.connect(str(db_path))
@@ -447,7 +448,7 @@ async def test_empty_db_is_noop(tmp_path):
         );
         CREATE TABLE health_logs (id INTEGER PRIMARY KEY, stream_id INTEGER NOT NULL, checked_at TEXT NOT NULL, ok INTEGER NOT NULL);
         CREATE TABLE redirects (token TEXT PRIMARY KEY, channel_id INTEGER NOT NULL, stream_id INTEGER NOT NULL);
-        CREATE TABLE imports (id INTEGER PRIMARY KEY, source_url TEXT, source_label TEXT, started_at TEXT NOT NULL, notes TEXT);
+        CREATE TABLE imports (id INTEGER PRIMARY KEY, source_url TEXT, source_label TEXT, started_at TEXT NOT NULL, finished_at TEXT, notes TEXT);
     """)
     conn.commit()
     conn.close()
@@ -463,7 +464,9 @@ async def test_empty_db_is_noop(tmp_path):
         "dry_run": False,
         "scanned_labels": 0,
         "dead_labels": 0,
+        "empty_labels": 0,
         "pruned": [],
+        "empties": [],
     }
 
 
@@ -500,3 +503,264 @@ async def test_multi_source_channel_survives_one_dead_source(seeded):
         f"got {streams_on_5}"
     )
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Empty-label sweep — covers the "M3U imported 0 entries" case
+# (404, empty file, parser-rejected every line, etc.).
+# ---------------------------------------------------------------------------
+
+
+def _seed_with_empty_imports(path: Path) -> None:
+    """Build a minimal schema and seed three import rows:
+      - 'live'  : 1 stream  (healthy, not dead, not empty)
+      - 'gone'  : 0 streams (404'd M3U, should be flagged as empty)
+      - 'gone2' : 0 streams (different URL, also 404'd)
+      - 'pending' : 0 streams BUT finished_at is NULL (still running
+                    on the operator's CLI — don't flag)
+    Plus one dead-label scenario so we can verify the two sweeps
+    coexist in the same call.
+    """
+    conn = sqlite3.connect(str(path))
+    conn.executescript("""
+        CREATE TABLE channels (
+            id INTEGER PRIMARY KEY,
+            normalized_name TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'online',
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        CREATE TABLE streams (
+            id INTEGER PRIMARY KEY,
+            channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+            source_url TEXT NOT NULL UNIQUE,
+            source_label TEXT,
+            status TEXT NOT NULL DEFAULT 'unknown',
+            offline_since TEXT
+        );
+        CREATE TABLE health_logs (
+            id INTEGER PRIMARY KEY,
+            stream_id INTEGER NOT NULL REFERENCES streams(id) ON DELETE CASCADE,
+            checked_at TEXT NOT NULL DEFAULT (datetime('now')),
+            ok INTEGER NOT NULL
+        );
+        CREATE TABLE redirects (
+            token TEXT PRIMARY KEY,
+            channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+            stream_id INTEGER NOT NULL REFERENCES streams(id) ON DELETE CASCADE
+        );
+        CREATE TABLE imports (
+            id INTEGER PRIMARY KEY,
+            source_url TEXT,
+            source_label TEXT,
+            started_at TEXT NOT NULL DEFAULT (datetime('now')),
+            finished_at TEXT,
+            channels_new INTEGER NOT NULL DEFAULT 0,
+            streams_new INTEGER NOT NULL DEFAULT 0,
+            duplicates INTEGER NOT NULL DEFAULT 0,
+            notes TEXT
+        );
+    """)
+    # 1 healthy channel + stream
+    conn.execute(
+        "INSERT INTO channels (id, normalized_name, display_name) VALUES (1, 'live-x', 'Live X')"
+    )
+    conn.execute(
+        "INSERT INTO streams (id, channel_id, source_url, source_label, status) "
+        "VALUES (1, 1, 'http://live/x', 'live', 'online')"
+    )
+    # 1 dead label with 1 stream (the regular prune case)
+    conn.execute(
+        "INSERT INTO channels (id, normalized_name, display_name) VALUES (2, 'dead-x', 'Dead X')"
+    )
+    conn.execute(
+        "INSERT INTO streams (id, channel_id, source_url, source_label, status, offline_since) "
+        "VALUES (2, 2, 'http://dead/x', 'dead-label', 'offline', datetime('now', '-1 hour'))"
+    )
+    # Imports: 4 audit rows
+    conn.executemany(
+        """
+        INSERT INTO imports (id, source_url, source_label, started_at, finished_at, notes)
+        VALUES (?, ?, ?, datetime('now'), datetime('now'), ?)
+        """,
+        [
+            (1, "http://live.m3u", "live", "imported 1"),
+            (2, "http://dead.m3u", "dead-label", "imported 1"),
+            (3, "http://404-gone.m3u", "gone", "imported 0 (HTTP 404)"),
+            (4, "http://also-404.m3u", "gone2", ""),
+            # (5) 'pending' is below — finished_at is NULL
+        ],
+    )
+    conn.execute(
+        "INSERT INTO imports (id, source_url, source_label, started_at, finished_at, notes) "
+        "VALUES (5, 'http://slow.m3u', 'pending', datetime('now'), NULL, '')"
+    )
+    conn.commit()
+    conn.close()
+
+
+@pytest.fixture
+def with_empties(tmp_path: Path) -> Path:
+    db = tmp_path / "empties.db"
+    _seed_with_empty_imports(db)
+    return db
+
+
+@pytest.mark.asyncio
+async def test_annotates_empty_labels_in_imports_table(with_empties):
+    """An import row whose source_label has 0 streams is flagged with
+    a 'pruned: empty' note. The dead-label path runs in the same
+    call. The 'pending' import (finished_at IS NULL) is left alone."""
+    import aiosqlite
+    db = await aiosqlite.connect(str(with_empties))
+    db.row_factory = aiosqlite.Row
+    await db.execute("PRAGMA foreign_keys = ON")
+    try:
+        result = await engine.pruner.prune_dead_playlists(db)
+    finally:
+        await db.close()
+
+    # The dead-label path: 1 dead label ('dead-label'), 1 stream gone, 1 channel gone.
+    assert result["dead_labels"] == 1
+    by_label = {p["source_label"]: p for p in result["pruned"]}
+    assert "dead-label" in by_label
+    assert by_label["dead-label"]["streams_deleted"] == 1
+    assert by_label["dead-label"]["channels_deleted"] == 1
+
+    # The empty-label path: 2 empty labels ('gone' + 'gone2').
+    # 'pending' is excluded by the finished_at IS NOT NULL clause.
+    assert result["empty_labels"] == 2
+    by_empty = {e["source_label"]: e for e in result["empties"]}
+    assert "gone" in by_empty
+    assert "gone2" in by_empty
+    assert "pending" not in by_empty
+    assert "live" not in by_empty
+    assert "dead-label" not in by_empty
+    # The empties report includes the import id + source_url for audit.
+    assert by_empty["gone"]["import_id"] == 3
+    assert by_empty["gone"]["source_url"] == "http://404-gone.m3u"
+
+    # Verify the imports table has the annotation on the empty rows.
+    conn = sqlite3.connect(str(with_empties))
+    conn.row_factory = sqlite3.Row
+    notes_by_label = {
+        r["source_label"]: r["notes"]
+        for r in conn.execute("SELECT source_label, notes FROM imports ORDER BY id")
+    }
+    conn.close()
+    assert "pruned: empty" in notes_by_label["gone"]
+    assert "pruned: empty" in notes_by_label["gone2"]
+    # Pending is untouched (still empty string).
+    assert notes_by_label["pending"] == ""
+    # Live import is untouched.
+    assert notes_by_label["live"] == "imported 1"
+    # Dead-label import is annotated with the streams-form note.
+    assert "pruned:" in notes_by_label["dead-label"]
+
+
+@pytest.mark.asyncio
+async def test_empty_label_sweep_is_idempotent(with_empties):
+    """Second call must be a no-op for the empty-label sweep too —
+    we don't keep re-appending the 'pruned: empty' note."""
+    import aiosqlite
+
+    async def _prune():
+        db = await aiosqlite.connect(str(with_empties))
+        db.row_factory = aiosqlite.Row
+        await db.execute("PRAGMA foreign_keys = ON")
+        try:
+            return await engine.pruner.prune_dead_playlists(db)
+        finally:
+            await db.close()
+
+    first = await _prune()
+    assert first["empty_labels"] == 2
+    assert first["empty_labels_seen"] == 2
+
+    second = await _prune()
+    # After the first call: gone + gone2 imports are annotated, and
+    # the dead-label's streams+channels are gone. The dead-label's
+    # IMPORT row is still in `imports` (we never delete import rows),
+    # so the LEFT JOIN now detects 3 empty labels: gone, gone2, AND
+    # the dead-label. The pruner checks for '[pruned:' (any form) to
+    # skip re-annotation, so on the 2nd call:
+    #   - dead_labels = 0 (streams already gone in step 5)
+    #   - empty_labels_seen = 3 (all 3 imports have no streams)
+    #   - empty_labels (newly annotated) = 0 (all 3 already have the
+    #     [pruned: ...] note from step 5 OR step 6 of the 1st call)
+    #   - pruned = []  (no streams to delete)
+    #   - empties = [] (no imports to annotate)
+    assert second["dead_labels"] == 0
+    assert second["empty_labels_seen"] == 3
+    assert second["empty_labels"] == 0
+    assert second["pruned"] == []
+    assert second["empties"] == []
+
+    # And the notes table has exactly one 'pruned: empty' substring
+    # per empty label — not duplicated.
+    conn = sqlite3.connect(str(with_empties))
+    conn.row_factory = sqlite3.Row
+    gone_notes = [
+        r["notes"] for r in conn.execute(
+            "SELECT notes FROM imports WHERE source_label = 'gone'"
+        )
+    ]
+    conn.close()
+    assert len(gone_notes) == 1
+    assert gone_notes[0].count("pruned: empty") == 1
+
+
+@pytest.mark.asyncio
+async def test_dry_run_annotates_nothing(with_empties):
+    """dry_run=True reports the empties but does NOT update the
+    imports.notes column."""
+    import aiosqlite
+    db = await aiosqlite.connect(str(with_empties))
+    db.row_factory = aiosqlite.Row
+    await db.execute("PRAGMA foreign_keys = ON")
+    try:
+        result = await engine.pruner.prune_dead_playlists(db, dry_run=True)
+    finally:
+        await db.close()
+
+    # The dry-run enumerates the empties and the dead label, but the
+    # shape of `empties` is the audit metadata (import_id, source_url),
+    # NOT the same as the streams-pruned report. (We don't have a
+    # `streams_deleted` field — there's nothing to delete for an
+    # empty label.)
+    assert result["empty_labels"] == 2
+    for e in result["empties"]:
+        assert "source_label" in e
+        assert "import_id" in e
+        assert "source_url" in e
+
+    # Imports table is untouched.
+    conn = sqlite3.connect(str(with_empties))
+    conn.row_factory = sqlite3.Row
+    notes_by_label = {
+        r["source_label"]: r["notes"]
+        for r in conn.execute("SELECT source_label, notes FROM imports ORDER BY id")
+    }
+    conn.close()
+    assert notes_by_label["gone"] == "imported 0 (HTTP 404)"
+    assert notes_by_label["gone2"] == ""
+    assert notes_by_label["pending"] == ""
+
+
+@pytest.mark.asyncio
+async def test_no_empty_labels_is_noop(seeded):
+    """When all imports in the audit table have at least one stream
+    (the standard seeded fixture), the empty-label sweep returns
+    0 and doesn't touch the imports table."""
+    import aiosqlite
+    db = await aiosqlite.connect(str(seeded))
+    db.row_factory = aiosqlite.Row
+    await db.execute("PRAGMA foreign_keys = ON")
+    try:
+        result = await engine.pruner.prune_dead_playlists(db)
+    finally:
+        await db.close()
+
+    assert result["empty_labels"] == 0
+    assert result["empty_labels_seen"] == 0
+    assert result["empties"] == []
