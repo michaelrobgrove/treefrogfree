@@ -66,13 +66,14 @@ function isStale(acct: Account | null): boolean {
  *  customer is told their dashboard expires date is best-
  *  effort. */
 async function refreshExpiresAt(
-    kv: KVNamespace,
+    ctx: PagesContext,
     acct: Account,
     username: string,
     password: string,
 ): Promise<void> {
+    const kv = ctx.env.PLUS_KV as KVNamespace;
     try {
-        const info = await getDeviceInfo({ username, password });
+        const info = await getDeviceInfo({ username, password }, ctx.env as Record<string, unknown>);
         if (info.expire) {
             acct.expires_at = info.expire;
             await putAccount(kv, acct);
@@ -127,7 +128,7 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
             // Refresh expires_at from the panel as a best-effort
             // operation. This keeps the dashboard accurate without
             // an API call on every sign-in.
-            await refreshExpiresAt(kv, acct, username, password);
+            await refreshExpiresAt(ctx, acct, username, password);
             acct.last_login_at = new Date().toISOString();
             await putAccount(kv, acct);
             const { cookie } = await createSession(kv, acct.paypal_order_id, ctx.request.url);
@@ -141,7 +142,7 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
     // 3. Verify against Gold Panel directly.
     let info: any;
     try {
-        info = await getDeviceInfo({ username, password });
+        info = await getDeviceInfo({ username, password }, ctx.env as Record<string, unknown>);
     } catch (e) {
         // Constant-time-ish: still hash to avoid timing oracle
         // when there's no local record.

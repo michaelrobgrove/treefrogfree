@@ -87,10 +87,10 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
             getCheckoutIntent: (id: string) => getCheckoutIntent(kv, id),
             deleteCheckoutIntent: (id: string) => deleteCheckoutIntent(kv, id),
             bouquetToPanelId,
-            createM3U,
-            renewM3U,
-            getDeviceInfo,
-            setDeviceStatus,
+                        createM3U: (opts) => createM3U(opts, ctx.env as Record<string, unknown>),
+                        renewM3U: (opts) => renewM3U(opts, ctx.env as Record<string, unknown>),
+                        getDeviceInfo: (opts) => getDeviceInfo(opts, ctx.env as Record<string, unknown>),
+                        setDeviceStatus: (opts) => setDeviceStatus(opts, ctx.env as Record<string, unknown>),
             welcomeEmail,
             paymentFailedEmail,
             renewalReceiptEmail,
@@ -115,11 +115,11 @@ interface DispatchDeps {
     getCheckoutIntent: (id: string) => Promise<{ name: string; email: string; contact: ContactHandles; created_at: string } | null>;
     deleteCheckoutIntent: (id: string) => Promise<void>;
     bouquetToPanelId: (b: BouquetId) => string;
-    createM3U: (opts: { sub: 1 | 3 | 6 | 12; pack: string; country?: string; notes?: string }) => Promise<any>;
-    renewM3U: (opts: { username: string; password: string; sub: 1 | 3 | 6 | 12 }) => Promise<any>;
-    getDeviceInfo: (opts: { username: string; password: string }) => Promise<any>;
-    setDeviceStatus: (opts: { user_id: string; status: "enable" | "disable" }) => Promise<any>;
-    welcomeEmail: (opts: any) => { subject: string; html: string; text: string };
+                createM3U: (opts: { sub: 1 | 3 | 6 | 12; pack: string; country?: string; notes?: string }) => Promise<any>;
+                renewM3U: (opts: { username: string; password: string; sub: 1 | 3 | 6 | 12 }) => Promise<any>;
+                getDeviceInfo: (opts: { username: string; password: string }) => Promise<any>;
+                setDeviceStatus: (opts: { user_id: string; status: "enable" | "disable" }) => Promise<any>;
+                welcomeEmail: (opts: any) => { subject: string; html: string; text: string };
     paymentFailedEmail: (opts: any) => { subject: string; html: string; text: string };
     renewalReceiptEmail: (opts: any) => { subject: string; html: string; text: string };
     sendEmail: (opts: any) => Promise<void>;
@@ -184,7 +184,7 @@ async function dispatch(event: any, eventType: string, d: DispatchDeps): Promise
             if (custom.kind === "initial") {
                 await handleInitialCapture(d, orderId, captureId, custom, buyerEmail, chargeAt, d.env);
             } else if (custom.kind === "renewal") {
-                await handleRenewalCapture(d, orderId, captureId, custom, buyerEmail, chargeAt);
+                            await handleRenewalCapture(d, orderId, captureId, custom, buyerEmail, chargeAt);
             } else {
                 console.warn("CAPTURE.COMPLETED: unparseable custom_id", customId);
             }

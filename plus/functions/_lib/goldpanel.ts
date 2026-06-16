@@ -53,8 +53,9 @@ export interface Bouquet {
     name: string;
 }
 
-function apiKey(): string {
-    const v = (globalThis as any).GOLDPANEL_API_KEY;
+/** Get the Gold Panel API key from the environment. */
+export function getApiKey(env: Record<string, unknown>): string {
+    const v = (env as any).GOLDPANEL_API_KEY;
     if (typeof v !== "string" || !v) {
         throw new Error("GOLDPANEL_API_KEY is not configured.");
     }
@@ -62,8 +63,8 @@ function apiKey(): string {
 }
 
 /** Lower-level GET against the reseller API. */
-async function panelGet<T = unknown>(params: Record<string, string>): Promise<T> {
-    const qs = new URLSearchParams({ ...params, api_key: apiKey() });
+async function panelGet<T = unknown>(params: Record<string, string>, env: Record<string, unknown>): Promise<T> {
+    const qs = new URLSearchParams({ ...params, api_key: getApiKey(env) });
     const url = `${PANEL_BASE}?${qs.toString()}`;
     let resp: Response;
     try {
@@ -91,10 +92,10 @@ async function panelGet<T = unknown>(params: Record<string, string>): Promise<T>
 }
 
 /** List custom bouquets configured by the reseller in the panel. */
-export async function listBouquets(): Promise<Bouquet[]> {
+export async function listBouquets(env: Record<string, unknown>): Promise<Bouquet[]> {
     // The `action=bouquet` response is an array of bouquets, not a
     // single object with `status: true` — fetch it directly.
-    const all = await fetch(`${PANEL_BASE}?action=bouquet&api_key=${encodeURIComponent(apiKey())}`);
+    const all = await fetch(`${PANEL_BASE}?action=bouquet&api_key=${encodeURIComponent(getApiKey(env))}`);
     const arr = await all.json();
     return (arr as Array<{ id: string; name: string }>).map((b) => ({
         id: String(b.id),
@@ -103,10 +104,10 @@ export async function listBouquets(): Promise<Bouquet[]> {
 }
 
 /** Reseller info — for monitoring credits. */
-export async function resellerInfo(): Promise<{ username: string; credits: string; enabled: string }> {
+export async function resellerInfo(env: Record<string, unknown>): Promise<{ username: string; credits: string; enabled: string }> {
     const data = await panelGet<{ username: string; credits: string; enabled: string }>({
         action: "reseller",
-    });
+    }, env);
     return data;
 }
 
@@ -119,7 +120,7 @@ export async function createM3U(opts: {
     pack: string;
     country?: string;
     notes?: string;
-}): Promise<M3UCredentials> {
+}, env: Record<string, unknown>): Promise<M3UCredentials> {
     const raw = await panelGet<Record<string, string>>({
         action: "new",
         type: "m3u",
@@ -127,7 +128,7 @@ export async function createM3U(opts: {
         pack: opts.pack,
         country: opts.country || "",
         notes: opts.notes || "",
-    });
+    }, env);
     if (!raw.user_id) {
         throw new Error("Gold Panel createM3U: missing user_id in response");
     }
@@ -159,26 +160,26 @@ export async function renewM3U(opts: {
     username: string;
     password: string;
     sub: 1 | 3 | 6 | 12;
-}): Promise<{ ok: true; raw: unknown }> {
+}, env: Record<string, unknown>): Promise<{ ok: true; raw: unknown }> {
     const raw = await panelGet<Record<string, string>>({
         action: "renew",
         type: "m3u",
         username: opts.username,
         password: opts.password,
         sub: String(opts.sub),
-    });
+    }, env);
     return { ok: true, raw };
 }
 
 export async function getDeviceInfo(opts: {
     username: string;
     password: string;
-}): Promise<DeviceInfo> {
+}, env: Record<string, unknown>): Promise<DeviceInfo> {
     const raw = await panelGet<Record<string, string>>({
         action: "device_info",
         username: opts.username,
         password: opts.password,
-    });
+    }, env);
     return {
         username:   raw.username,
         password:   raw.password,
@@ -193,12 +194,12 @@ export async function getDeviceInfo(opts: {
 export async function setDeviceStatus(opts: {
     user_id: string;
     status: "enable" | "disable";
-}): Promise<{ ok: true; raw: unknown }> {
+}, env: Record<string, unknown>): Promise<{ ok: true; raw: unknown }> {
     const raw = await panelGet<Record<string, string>>({
         action: "device_status",
         id: opts.user_id,
         status: opts.status,
-    });
+    }, env);
     return { ok: true, raw };
 }
 
