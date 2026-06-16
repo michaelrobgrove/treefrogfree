@@ -19,6 +19,7 @@ export const onRequestGet = async (ctx: PagesContext): Promise<Response> => {
     const { getSessionAccount } = await import("../../_lib/session");
     const { decryptPanelPassword } = await import("../../_lib/kv");
     const { listLiveChannels } = await import("../../_lib/goldpanel");
+    const { panelIdToBouquet } = await import("../../_lib/plans");
 
     const sess = await getSessionAccount(ctx.request, kv);
     if (!sess) return json({ error: "Not signed in" }, 401);
@@ -31,6 +32,10 @@ export const onRequestGet = async (ctx: PagesContext): Promise<Response> => {
         return json({ error: "Could not decrypt credentials; sign in again to refresh." }, 401);
     }
 
+    // Determine if the user is on a custom bouquet
+    const bouquet = panelIdToBouquet(acct.panel_bouquet_id);
+    const isCustomBouquet = bouquet === null;
+
     const cacheKey = `player:channels:${acct.paypal_order_id}`;
     const cached = await kv.get(cacheKey);
     if (cached) {
@@ -41,7 +46,10 @@ export const onRequestGet = async (ctx: PagesContext): Promise<Response> => {
     }
     try {
         const data = await listLiveChannels(acct.panel_username, password);
-        const body = JSON.stringify(data);
+        // For custom bouquets, the panel already returns only the channels
+        // for that custom bouquet, so we pass through the data as-is.
+        // For standard bouquets, existing matching behavior is retained.
+        const body = JSON.stringify({ ...data, is_custom_bouquet: isCustomBouquet });
         await kv.put(cacheKey, body, { expirationTtl: 300 });
         return new Response(body, {
             status: 200,
