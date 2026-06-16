@@ -44,13 +44,26 @@
   let status = null;
   let hls = null;
   let currentChannel = null;
+  // The player walks this list, top-to-bottom, on each error.
+  // Parallel to `urls`: `corsOk[i]` is the per-URL CORS state
+  // reported by the engine's secondary browser probe:
+  //   true  → fetch the URL directly (CORS-OK on the origin)
+  //   false → route through the Worker's /api/proxy?u=... (the
+  //           origin doesn't allow cross-origin fetches but
+  //           the bytes are fine)
+  //   null  → unknown / not yet probed; we treat as "needs proxy"
+  //           so a fresh import doesn't burn CPU on direct
+  //           fetches that will fail. The next health cycle
+  //           upgrades the flag for sources that turn out to
+  //           be CORS-OK.
   let urls = [];
+  let corsOk = [];
   let urlIndex = 0;
   // Per-URL error log. We surface the last failure reason in the
   // UI when every URL is exhausted so the user (and the operator
   // triaging support tickets) can see *why* it didn't play — not
   // a generic "all sources failed" black box.
-  // Each entry: { url, type, details, status, message }
+  // Each entry: { url, type, details, status, message, proxied }
   let errorLog = [];
   // Whether we've already requested the browser to launch an
   // external player (VLC) on this round. The retry button on the
@@ -63,6 +76,7 @@
   function open(channel) {
     currentChannel = channel;
     urls = [];
+    corsOk = [];
     urlIndex = 0;
     errorLog = [];
     lastAttemptedUrl = null;
@@ -234,6 +248,17 @@
     }
     const data = await resp.json();
     urls = Array.isArray(data.urls) ? data.urls : [];
+    // The streams:<token> payload is index-aligned:
+    //   data.urls[i]    is the i-th online stream
+    //   data.cors_ok[i] is true / false / null per the engine's
+    //                    secondary browser probe (see the comment
+    //                    near `corsOk` above for semantics). The
+    //                    field may be missing on older payloads
+    //                    (pre-CORS-detection); we treat missing
+    //                    as "needs proxy" so old KV blobs still
+    //                    play — just slightly slower.
+    const rawCors = Array.isArray(data.cors_ok) ? data.cors_ok : [];
+    corsOk = urls.map((_, i) => (i in rawCors ? rawCors[i] : null));
     if (urls.length === 0) {
       setStatus('No online streams for this channel right now. Try again in a few minutes.');
       return;
@@ -254,9 +279,23 @@
       return;
     }
     const url = urls[urlIndex];
+    const needsProxy = corsOk[urlIndex] !== true;
+    const proxiedUrl = needsProxy ? toProxyUrl(url) : url;
     lastAttemptedUrl = url;
-    setStatus(`Source ${urlIndex + 1} of ${urls.length}…`);
-    attachSource(url);
+    setStatus(
+      `Source ${urlIndex + 1} of ${urls.length}` +
+      (needsProxy ? ' (via proxy)…' : '…'),
+    );
+    attachSource(proxiedUrl, url, needsProxy);
+  }
+
+  // Wrap a stream URL in the Worker's CORS proxy. The Worker at
+  // /api/proxy?u=... fetches the upstream and re-emits it with
+  // Access-Control-Allow-Origin: *. For m3u8 manifests, it also
+  // rewrites segment URLs to also go through the proxy, so the
+  // browser can fetch them too. See worker.ts handleCorsProxy.
+  function toProxyUrl(u) {
+    return `/api/proxy?u=${encodeURIComponent(u)}`;
   }
 
   function showAllFailed() {
@@ -367,7 +406,13 @@
     return err.details || err.type || 'unknown error';
   }
 
-  function attachSource(url) {
+  function attachSource(url, originalUrl, proxied) {
+    // `url` is what hls.js loads — either the original stream URL
+    // (when CORS is fine) or /api/proxy?u=... (when it isn't).
+    // `originalUrl` is the upstream m3u8, used in the error log
+    // and "Open in VLC" link so the user gets the real URL.
+    // `proxied` is true when we're routing through the Worker,
+    // so the error log can note "(via proxy)" in the details.
     teardownHls();
     if (window.Hls && window.Hls.isSupported()) {
       hls = new window.Hls({
@@ -405,11 +450,12 @@
             ? data.response.code
             : null;
           errorLog.push({
-            url,
+            url: originalUrl,
             type: data.type,
-            details: data.details,
+            details: (data.details || '') + (proxied ? ' (via proxy)' : ''),
             status,
             message: data.error ? String(data.error.message || data.error) : null,
+            proxied: !!proxied,
           });
         }
         if (!data.fatal) return; // non-fatal: hls.js recovers itself
@@ -427,11 +473,13 @@
         const v = video;
         const me = v && v.error;
         errorLog.push({
-          url,
+          url: originalUrl,
           type: 'nativeMediaError',
-          details: me ? `native code ${me.code}` : 'native error',
+          details: (me ? `native code ${me.code}` : 'native error') +
+                   (proxied ? ' (via proxy)' : ''),
           status: null,
           message: me ? me.message || `MediaError code ${me.code}` : null,
+          proxied: !!proxied,
         });
         advanceOrFail('native error');
       };
@@ -464,6 +512,7 @@
   function teardown() {
     teardownHls();
     urls = [];
+    corsOk = [];
     urlIndex = 0;
     currentChannel = null;
     if (status) setStatus('Loading…');

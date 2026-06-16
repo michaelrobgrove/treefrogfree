@@ -1,0 +1,37 @@
+-- Per-stream CORS-compatibility flag.
+--
+-- A stream can serve a valid M3U to a server-side fetch (and thus
+-- `browser_ok = 1`) but still fail in a real browser because the
+-- origin server doesn't return `Access-Control-Allow-Origin` headers.
+-- CORS is a browser-enforced policy; HLS.js fetches the manifest via
+-- XHR/fetch (subject to CORS) and the segments the same way. A missing
+-- or wrong ACAO header is fatal to the player even though the bytes
+-- would be fine.
+--
+-- The web player already filters on `browser_ok`; this column is the
+-- next-stage filter. With both:
+--   browser_ok = 1 AND cors_ok = 1  -> the player fetches directly
+--   browser_ok = 1 AND cors_ok = 0  -> the player fetches via the
+--                                       Worker's CORS proxy
+--   browser_ok = 0                  -> the stream is excluded from
+--                                       the web player entirely
+--                                       (the upstream is 4xx/5xx to a
+--                                        real browser, no proxy helps)
+--
+-- The probe is folded into the existing browser-UA probe: same single
+-- GET, but with an `Origin` header and a check of the response's
+-- `Access-Control-Allow-Origin` value. Cheap, runs every health cycle.
+--
+--   NULL = not yet probed (or probe inconclusive — keep visible to
+--          the player so new imports don't go dark)
+--    1   = ACAO is `*` or matches `https://free.tfplus.stream`
+--    0   = missing or wrong ACAO; would need the Worker proxy
+--
+-- Same convention as 0002_browser_ok.sql: NULL means "don't know yet,
+-- be lenient," not "1 = good, 0 = bad." The web player's filter is
+-- `WHERE browser_ok IN (NULL, 1) AND cors_ok IN (NULL, 1)`.
+--
+-- M3U playlist and /s/<token> 302s are unaffected — they continue to
+-- serve every online stream to VLC/TiviMate.
+
+ALTER TABLE streams ADD COLUMN cors_ok INTEGER;

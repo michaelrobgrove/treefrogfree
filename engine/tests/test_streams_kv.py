@@ -188,6 +188,7 @@ def _seed_db(path: Path) -> None:
             last_error TEXT,
             last_latency_ms INTEGER,
             browser_ok INTEGER,
+            cors_ok INTEGER,
             UNIQUE (source_url)
         );
         CREATE TABLE redirects (
@@ -453,3 +454,72 @@ async def test_keeps_streams_with_browser_ok_null_or_one(seeded_db):
     # All three NULL streams survive — the filter is "NULL OR 1",
     # not "1 only".
     assert len(cnn["urls"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_publishes_cors_ok_per_url(seeded_db):
+    """The streams:<token> payload now includes a parallel `cors_ok`
+    array so the player can decide per-URL whether to fetch direct
+    or via the Worker proxy. NULL → None in JSON; 1 → True; 0 →
+    False. The list is index-aligned with `urls`."""
+    import aiosqlite
+    async with aiosqlite.connect(str(seeded_db)) as db:
+        # CNN has 3 streams; mark one CORS-OK, one CORS-blocked, one NULL.
+        await db.execute(
+            "UPDATE streams SET cors_ok = 1 WHERE source_url = 'http://provider-c/cnn.m3u8'"
+        )
+        await db.execute(
+            "UPDATE streams SET cors_ok = 0 WHERE source_url = 'http://provider-a/cnn.m3u8'"
+        )
+        # Leave provider-b/cnn.m3u8 at NULL.
+        await db.commit()
+    async def _open_my_db():
+        c = await aiosqlite.connect(str(seeded_db))
+        c.row_factory = aiosqlite.Row
+        return c
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(
+            engine.publisher.streams_kv, "open_db", _open_my_db
+        )
+        await engine.publisher.streams_kv.publish_stream_lists()
+    finally:
+        monkeypatch.undo()
+
+    cnn = json.loads(_KV.store["streams:bbbbbb"])
+    # urls is in priority ASC, id ASC: provider-c (prio 50) first,
+    # then provider-a (prio 100, id lower), then provider-b (prio 100).
+    assert cnn["urls"] == [
+        "http://provider-c/cnn.m3u8",
+        "http://provider-a/cnn.m3u8",
+        "http://provider-b/cnn.m3u8",
+    ]
+    # cors_ok is parallel and preserves the 1/0/NULL mapping:
+    # 1 → True, 0 → False, NULL → None.
+    assert cnn["cors_ok"] == [True, False, None]
+
+
+@pytest.mark.asyncio
+async def test_cors_ok_field_present_even_when_all_null(seeded_db):
+    """A fresh import (no health cycle yet) has every stream's
+    cors_ok = NULL. The publisher must still emit the `cors_ok`
+    field so the player's `cors_ok[i] === null` check works
+    uniformly — it doesn't have to special-case 'field missing'."""
+    import aiosqlite
+    async def _open_my_db():
+        c = await aiosqlite.connect(str(seeded_db))
+        c.row_factory = aiosqlite.Row
+        return c
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(
+            engine.publisher.streams_kv, "open_db", _open_my_db
+        )
+        await engine.publisher.streams_kv.publish_stream_lists()
+    finally:
+        monkeypatch.undo()
+
+    cnn = json.loads(_KV.store["streams:bbbbbb"])
+    # All NULL → all None in JSON. The field is present, not absent.
+    assert "cors_ok" in cnn
+    assert cnn["cors_ok"] == [None, None, None]

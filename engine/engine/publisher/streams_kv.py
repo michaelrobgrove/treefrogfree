@@ -70,11 +70,21 @@ async def publish_stream_lists(*, force: bool = False) -> dict:
         # URL the browser can't render. The public M3U playlist and
         # the /s/<token> 302s are unaffected — they still serve every
         # online stream to VLC/TiviMate.
-        streams_by_channel: dict[str, list[str]] = {}
+        #
+        # We also return a parallel `cors_ok` list (True/False/None per
+        # URL) so the player can decide which URLs to fetch directly
+        # vs. which to route through the Worker's CORS proxy. A URL
+        # with `cors_ok = False` is still playable — the player just
+        # needs to go through /api/proxy?u=... instead of fetching it
+        # directly, so the Worker's CORS headers paper over the
+        # origin's missing ACAO. URLs with `cors_ok = None` are
+        # treated as "needs the proxy" (safe default) until the next
+        # health cycle confirms otherwise.
+        streams_by_channel: dict[str, list[dict]] = {}
         for r in rows:
             async with db.execute(
                 """
-                SELECT source_url
+                SELECT id, source_url, priority, cors_ok
                 FROM streams
                 WHERE channel_id = ? AND status = 'online'
                   AND (browser_ok IS NULL OR browser_ok = 1)
@@ -82,8 +92,18 @@ async def publish_stream_lists(*, force: bool = False) -> dict:
                 """,
                 (r["channel_id"],),
             ) as cur:
-                urls = [row["source_url"] for row in await cur.fetchall()]
-            streams_by_channel[r["token"]] = urls
+                streams_by_channel[r["token"]] = [
+                    {
+                        "url": row["source_url"],
+                        "id": int(row["id"]),
+                        "cors_ok": (
+                            True  if row["cors_ok"] == 1 else
+                            False if row["cors_ok"] == 0 else
+                            None
+                        ),
+                    }
+                    for row in await cur.fetchall()
+                ]
     finally:
         await db.close()
 
@@ -94,12 +114,13 @@ async def publish_stream_lists(*, force: bool = False) -> dict:
 
         async def process(token: str, channel_id: int, name: str,
                           tvg_id: str | None, logo: str | None,
-                          channel_status: str, urls: list[str]) -> None:
+                          channel_status: str,
+                          entries: list[dict]) -> None:
             nonlocal written, deleted, unchanged, errors
             async with sem:
                 # If the channel went offline, drop the stream list
                 # entirely — there's nothing for the player to play.
-                if channel_status != "online" or not urls:
+                if channel_status != "online" or not entries:
                     if force or await _get_kv(session, f"streams:{token}") is not None:
                         if await _delete_kv(session, f"streams:{token}"):
                             deleted += 1
@@ -108,6 +129,13 @@ async def publish_stream_lists(*, force: bool = False) -> dict:
                     else:
                         unchanged += 1
                     return
+                # Build parallel arrays so the player can match each
+                # URL to its CORS state by index. Old player code that
+                # only knew about `urls` still works (it ignores the
+                # extra fields); the new player uses `cors_ok` to
+                # decide direct vs. proxy per URL.
+                urls = [e["url"] for e in entries]
+                cors_ok = [e["cors_ok"] for e in entries]
                 payload = json.dumps(
                     {
                         "channel_id": channel_id,
@@ -115,6 +143,7 @@ async def publish_stream_lists(*, force: bool = False) -> dict:
                         "name": name,
                         "logo": logo,
                         "urls": urls,
+                        "cors_ok": cors_ok,
                     },
                     separators=(",", ":"),
                     ensure_ascii=False,

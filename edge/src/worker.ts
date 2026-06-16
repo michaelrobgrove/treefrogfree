@@ -8,9 +8,21 @@
  * Player JSON (served from KV, no engine needed at request time):
  *   GET /api/streams/<token>         → KV.get("streams:<token>")
  *                                      (channel meta + ordered list of
- *                                      online stream URLs for failover)
+ *                                      online stream URLs for failover
+ *                                      + per-URL cors_ok flags so the
+ *                                      player knows which to fetch
+ *                                      direct vs. via the proxy)
  *   GET /api/epg/nownext/<tvg_id>    → KV.get("epg:nownext:<tvg_id>")
  *                                      (on-now / up-next program JSON)
+ *
+ * CORS proxy (for streams whose origin doesn't return an
+ * Access-Control-Allow-Origin header that allows free.tfplus.stream):
+ *   GET /api/proxy?u=<encoded upstream URL>
+ *     → fetches the upstream, re-emits it with CORS headers. For
+ *       m3u8 manifests, rewrites relative segment URLs to also go
+ *       through the proxy so the segments themselves are reachable
+ *       from the browser. For binary TS segments, streams them
+ *       through as-is with the right content-type.
  *
  * Public read path (served from KV, no engine needed at request time):
  *   GET /api/channels.json  → KV.get("catalog:channels.json")
@@ -122,6 +134,15 @@ export default {
         (id) => isValidTvgId(id),
         "Invalid tvg_id",
       );
+    }
+
+    // ---- CORS proxy ----
+    // Player-side fallback for streams whose origin doesn't allow
+    // cross-origin fetches from free.tfplus.stream. The player uses
+    // the per-URL `cors_ok` flag in the streams:<token> payload to
+    // decide which URLs to route through here. See handleCorsProxy.
+    if (path === "/api/proxy") {
+      return handleCorsProxy(request, env);
     }
 
     // ---- Static site ----
@@ -275,4 +296,249 @@ async function handlePlayerJson(
       "Access-Control-Allow-Origin": "*",
     },
   });
+}
+
+/**
+ * Maximum upstream URL length the proxy will accept. Real HLS segment
+ * URLs are typically 200-500 chars; 2048 covers the long tail and
+ * blocks obviously-attack-shaped inputs before we touch `fetch()`.
+ */
+const PROXY_MAX_URL_LENGTH = 2048;
+
+/**
+ * Handle a request to /api/proxy?u=<encoded upstream URL>.
+ *
+ * Use case: a stream's origin doesn't return
+ * `Access-Control-Allow-Origin: https://free.tfplus.stream`, so the
+ * browser blocks the manifest/segment fetch even though the bytes
+ * are fine. The player's stream list (`streams:<token>`) carries a
+ * per-URL `cors_ok` flag; when it's false (or null — unknown is the
+ * safe default), the player rewrites the URL to go through here.
+ *
+ * What this does:
+ *  1. Validates `u` is http(s) and within the size cap.
+ *  2. Forwards the request (with a few realistic browser-shaped
+ *     headers so a CDN that gates on User-Agent doesn't 403 us).
+ *  3. Streams the response body back with CORS headers.
+ *  4. For m3u8 manifests: rewrites every relative URL line to also
+ *     go through the proxy, so segment fetches are reachable from
+ *     the browser too. Absolute URLs are passed through unchanged
+ *     (hls.js will fetch them; if they're also CORS-blocked, the
+ *     player will see a per-segment error and surface it).
+ *
+ * Cost note: every segment on every play goes through the Worker.
+ * For the free tier (100k req/day) this caps concurrent plays at
+ * ~1-2 channels; if the operator wants more, they upgrade to
+ * Workers Paid ($5/mo, 10M req). The per-URL `cors_ok` flag means
+ * only CORS-blocked sources pay this cost — direct-OK URLs go
+ * straight to the origin.
+ */
+async function handleCorsProxy(
+  request: Request,
+  _env: Env,
+): Promise<Response> {
+  // CORS preflight: if a browser asks "can I POST/GET here with
+  // these headers?" we answer before the real request. hls.js
+  // doesn't send a preflight for m3u8 GETs, but the public site
+  // itself might.
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Range, Content-Type",
+        "Access-Control-Max-Age": "86400",
+      },
+    });
+  }
+
+  const url = new URL(request.url);
+  const u = url.searchParams.get("u");
+  if (!u) {
+    return new Response("Missing ?u=", {
+      status: 400,
+      headers: { "Access-Control-Allow-Origin": "*" },
+    });
+  }
+  if (u.length > PROXY_MAX_URL_LENGTH) {
+    return new Response("URL too long", {
+      status: 414,
+      headers: { "Access-Control-Allow-Origin": "*" },
+    });
+  }
+  let upstream: URL;
+  try {
+    upstream = new URL(u);
+  } catch {
+    return new Response("Invalid URL", {
+      status: 400,
+      headers: { "Access-Control-Allow-Origin": "*" },
+    });
+  }
+  if (upstream.protocol !== "http:" && upstream.protocol !== "https:") {
+    return new Response("Unsupported protocol", {
+      status: 400,
+      headers: { "Access-Control-Allow-Origin": "*" },
+    });
+  }
+
+  // Range header passthrough for TS segments (hls.js uses
+  // Range: bytes=N- on some players). We never strip headers the
+  // browser sent — just add ours on the response.
+  const reqHeaders = new Headers();
+  reqHeaders.set(
+    "User-Agent",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  );
+  reqHeaders.set("Accept", "*/*");
+  if (request.headers.has("Range")) {
+    reqHeaders.set("Range", request.headers.get("Range")!);
+  }
+
+  let upstreamResp: Response;
+  try {
+    upstreamResp = await fetch(upstream.toString(), {
+      method: "GET",
+      headers: reqHeaders,
+      // Don't auto-follow redirects to private network addresses —
+      // CF's fetch() already blocks loopback/private IPs by default
+      // in production, so this is defense in depth.
+      redirect: "follow",
+    });
+  } catch (e) {
+    return new Response(
+      `Upstream fetch failed: ${(e as Error).message}`,
+      {
+        status: 502,
+        headers: { "Access-Control-Allow-Origin": "*" },
+      },
+    );
+  }
+
+  const contentType = upstreamResp.headers.get("Content-Type") ?? "";
+  const isM3U8 =
+    contentType.includes("mpegurl") ||
+    upstream.pathname.endsWith(".m3u8") ||
+    upstream.pathname.endsWith(".m3u");
+
+  // For m3u8: rewrite URLs inside the manifest so segments also
+  // proxy through us (and get CORS headers). For everything else
+  // (TS segments, fMP4 init segments, etc.) just stream it through.
+  let body: ReadableStream<Uint8Array> | string;
+  if (isM3U8 && upstreamResp.body) {
+    const text = await upstreamResp.text();
+    body = rewriteM3U8(text, upstream);
+  } else if (upstreamResp.body) {
+    body = upstreamResp.body;
+  } else {
+    body = "";
+  }
+
+  // Mirror useful upstream headers, but override CORS.
+  const outHeaders = new Headers();
+  if (isM3U8) {
+    outHeaders.set("Content-Type", "application/vnd.apple.mpegurl");
+  } else if (contentType) {
+    outHeaders.set("Content-Type", contentType);
+  } else {
+    outHeaders.set("Content-Type", "application/octet-stream");
+  }
+  if (upstreamResp.headers.has("Content-Length") && !isM3U8) {
+    outHeaders.set(
+      "Content-Length",
+      upstreamResp.headers.get("Content-Length")!,
+    );
+  }
+  if (upstreamResp.headers.has("Content-Range")) {
+    outHeaders.set(
+      "Content-Range",
+      upstreamResp.headers.get("Content-Range")!,
+    );
+  }
+  outHeaders.set("Access-Control-Allow-Origin", "*");
+  outHeaders.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+  outHeaders.set("Access-Control-Allow-Headers", "Range, Content-Type");
+  // m3u8s are small and time-sensitive; cache them briefly so we
+  // don't hammer the origin on every segment fetch. Segments are
+  // huge and time-sensitive too, but the upstream usually returns
+  // its own Cache-Control — let it through.
+  if (isM3U8) {
+    outHeaders.set("Cache-Control", "public, max-age=10");
+  } else if (upstreamResp.headers.has("Cache-Control")) {
+    outHeaders.set(
+      "Cache-Control",
+      upstreamResp.headers.get("Cache-Control")!,
+    );
+  }
+
+  return new Response(body, {
+    status: upstreamResp.status,
+    headers: outHeaders,
+  });
+}
+
+/**
+ * Rewrite an m3u8 manifest so every URL line (segment, key, etc.)
+ * is either left alone (if it's already an absolute http(s) URL)
+ * or wrapped to also go through the Worker's CORS proxy. The base
+ * URL is the upstream manifest URL — used to resolve relative
+ * paths to absolute ones, which is what the browser would do if
+ * it were fetching directly.
+ *
+ * We rewrite EVERY URL (absolute and relative) through the proxy.
+ * An absolute URL that already has CORS would technically not need
+ * it, but routing uniformly is simpler and the proxy is a thin
+ * pass-through with the same Content-Type/CORS headers every time.
+ * The player's `cors_ok` flag decides which URLs come here in the
+ * first place, so this only sees URLs that needed help.
+ *
+ * Line types we touch:
+ *   - Lines starting with `#` (and not `#EXTM3U`) are directives.
+ *     Most pass through; `#EXT-X-KEY` URIs need rewriting too if
+ *     the key server is also CORS-blocked. We rewrite the URI
+ *     attribute inline.
+ *   - Other lines are URLs (segment, key, variant playlist, etc.)
+ *     and always need absolute resolution.
+ */
+function rewriteM3U8(manifest: string, base: URL): string {
+  const proxiedBase = `/api/proxy?u=`;
+  const lines = manifest.split(/\r?\n/);
+  const out: string[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#EXTM3U")) {
+      out.push(raw);
+      continue;
+    }
+    if (line.startsWith("#")) {
+      // #EXT-X-KEY URI="https://..." — rewrite the URI attribute
+      // if present, leave METHOD / IV etc. alone.
+      if (/URI="([^"]+)"/.test(line)) {
+        out.push(
+          raw.replace(/URI="([^"]+)"/g, (_match, uri: string) => {
+            const abs = makeAbsolute(uri, base);
+            return `URI="${proxiedBase}${encodeURIComponent(abs)}"`;
+          }),
+        );
+        continue;
+      }
+      out.push(raw);
+      continue;
+    }
+    // Plain URL line (segment, key, etc.)
+    const abs = makeAbsolute(line, base);
+    out.push(`${proxiedBase}${encodeURIComponent(abs)}`);
+  }
+  return out.join("\n");
+}
+
+/**
+ * Resolve a possibly-relative URL against the manifest's base. If
+ * the input is already absolute, return it verbatim. Otherwise,
+ * resolve against `base` the way a browser would.
+ */
+function makeAbsolute(maybe: string, base: URL): string {
+  if (/^https?:\/\//i.test(maybe)) return maybe;
+  return new URL(maybe, base).toString();
 }

@@ -88,6 +88,14 @@ _BROWSER_EXTRA_HEADERS = {
     "Connection": "close",
 }
 
+# The Origin header the real browser would send. The public site's
+# pages are served from `https://free.tfplus.stream`; the player
+# runs there, so its XHR/fetch calls all carry this Origin. A
+# server that doesn't whitelist this exact origin (or `*`) will
+# fail CORS in the browser even though the bytes are fine. Hard-
+# coded for now — when Plus goes live we'll fold both origins in.
+PLAYER_ORIGIN = "https://free.tfplus.stream"
+
 # Concurrency cap. Comes from CONFIG.HEALTH_CONCURRENCY (default 50) and is
 # the primary knob the user can tune to stay under the 0.5 vCPU cap.
 _SEM: Optional[asyncio.Semaphore] = None
@@ -111,6 +119,13 @@ class ProbeResult:
     # probed but incompatible. The caller persists this into
     # `streams.browser_ok`.
     browser_ok: Optional[bool] = None
+    # True iff the origin returned an Access-Control-Allow-Origin
+    # header that allows the player to fetch the manifest cross-
+    # origin. None = not probed (probe inconclusive). The caller
+    # persists this into `streams.cors_ok`. The web player uses
+    # this to decide whether to fetch the URL directly or via the
+    # Worker's CORS proxy.
+    cors_ok: Optional[bool] = None
 
 
 async def _check_one(
@@ -187,11 +202,13 @@ async def _check_one(
         # Run the secondary browser-UA probe. A failure here does NOT
         # change `ok` (the VLC-based probe is the source of truth for
         # status / health_logs / M3U playlist); it only fills in
-        # `browser_ok` so publish_stream_lists can hide sources the
-        # browser player can't render.
-        browser_ok = await _probe_browser_ok(session, url, timeout)
+        # `browser_ok` and `cors_ok` so publish_stream_lists can hide
+        # sources the browser player can't render, and route CORS-
+        # blocked sources through the Worker proxy.
+        browser_ok, cors_ok = await _probe_browser_ok(session, url, timeout)
         return ProbeResult(
-            stream_id, True, latency_ms, None, browser_ok=browser_ok
+            stream_id, True, latency_ms, None,
+            browser_ok=browser_ok, cors_ok=cors_ok,
         )
     except asyncio.TimeoutError:
         return ProbeResult(
@@ -214,16 +231,30 @@ async def _probe_browser_ok(
     session: aiohttp.ClientSession,
     url: str,
     timeout: aiohttp.ClientTimeout,
-) -> Optional[bool]:
+) -> tuple[Optional[bool], Optional[bool]]:
     """Run the secondary browser-UA probe against `url`.
 
     Returns:
-        True  if a real browser would get an M3U-shaped response,
-        False if a real browser would get 4xx/5xx or a non-M3U body,
-        None if the probe itself failed (network/timeout) and we
-              couldn't tell — better to ship a stream we can't
-              confirm than to silently flip an unknown to "bad"
-              on a transient error.
+        (browser_ok, cors_ok):
+          browser_ok  True  if a real browser would get an M3U-shaped
+                          response,
+                      False if a real browser would get 4xx/5xx or a
+                          non-M3U body,
+                      None  if the probe itself failed (network/timeout)
+                          and we couldn't tell — better to ship a
+                          stream we can't confirm than to silently
+                          flip an unknown to "bad" on a transient
+                          error.
+          cors_ok     True  if the response carries
+                          `Access-Control-Allow-Origin: *` (or
+                          matches PLAYER_ORIGIN exactly) so the
+                          browser can fetch it cross-origin;
+                      False if the header is missing or wrong (the
+                          player would fail CORS — needs the Worker
+                          proxy);
+                      None  if browser_ok is None (we couldn't tell
+                          either way; the proxy route is the safe
+                          choice from the player's perspective).
 
     Cheap: one GET, capped at 16KB and `health_timeout_sec`. The
     primary VLC probe already verified the URL is real; this is
@@ -231,12 +262,25 @@ async def _probe_browser_ok(
     """
     try:
         async with session.get(
-            url, timeout=timeout, headers=_BROWSER_EXTRA_HEADERS,
+            url, timeout=timeout,
+            headers={**_BROWSER_EXTRA_HEADERS, "Origin": PLAYER_ORIGIN},
             allow_redirects=True,
         ) as resp:
             if resp.status >= 400:
                 log.debug("browser-ua probe: %s → HTTP %d", url, resp.status)
-                return False
+                return False, None
+            # CORS check: a browser will only accept this response if
+            # ACAO allows our origin. A wildcard or exact-match both
+            # work; case-sensitive per the spec. Missing/empty is the
+            # common case for IPTV origins that don't think about
+            # browser CORS at all.
+            acao = resp.headers.get("Access-Control-Allow-Origin", "")
+            cors_ok = acao == "*" or acao == PLAYER_ORIGIN
+            if not cors_ok:
+                log.debug(
+                    "browser-ua probe: %s → CORS blocked (ACAO=%r)",
+                    url, acao,
+                )
             buf = bytearray()
             async for chunk in resp.content.iter_chunked(4096):
                 buf.extend(chunk)
@@ -245,11 +289,11 @@ async def _probe_browser_ok(
                 if b"#EXTM3U" in buf:
                     break
         if b"#EXTM3U" in buf:
-            return True
+            return True, cors_ok
         # 2xx but no M3U signature — most likely a browser-specific
         # login wall or a UA-keyed error page. Treat as not OK.
         log.debug("browser-ua probe: %s → 2xx but no #EXTM3U", url)
-        return False
+        return False, None
     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
         log.debug("browser-ua probe: %s → %s", url, e)
         return None
@@ -327,15 +371,18 @@ async def run_health_cycle() -> dict:
                         last_checked_at = ?,
                         last_error = NULL,
                         last_latency_ms = ?,
-                        browser_ok = ?
+                        browser_ok = ?,
+                        cors_ok    = ?
                     WHERE id = ?
                     """,
                     (now, now, r.latency_ms,
                      # NULL stays NULL (don't claim OK until proven);
-                     # True → 1, False → 0. This is the secondary
-                     # browser-UA probe result, advisory only.
+                     # True → 1, False → 0. browser_ok and cors_ok
+                     # are the secondary probe results, advisory only.
                      (1 if r.browser_ok is True else
                       0 if r.browser_ok is False else None),
+                     (1 if r.cors_ok is True else
+                      0 if r.cors_ok is False else None),
                      stream_id),
                 )
             else:
