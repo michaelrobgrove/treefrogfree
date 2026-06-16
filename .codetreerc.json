@@ -1,0 +1,47 @@
+{
+  "projectRoot": ".",
+  "ignore": [
+    ".git",
+    "node_modules",
+    "dist",
+    "build",
+    "coverage",
+    ".next",
+    "__pycache__",
+    ".cache",
+    ".turbo"
+  ],
+  "ignoreBinary": true,
+  "maxFileSize": 1048576,
+  "cache": {
+    "memoryLimitMB": 256,
+    "dbPath": ".codetree/index.db",
+    "contentCacheMaxMB": 512
+  },
+  "ipc": {
+    "port": 0,
+    "host": "127.0.0.1"
+  },
+  "watch": {
+    "enabled": true,
+    "debounceMs": 300,
+    "usePolling": false
+  },
+  "symbols": {
+    "enabled": true,
+    "languages": [
+      "javascript",
+      "typescript",
+      "python",
+      "java",
+      "go",
+      "rust",
+      "ruby",
+      "csharp"
+    ]
+  },
+  "telemetry": {
+    "enabled": true,
+    "statsFile": ".codetree/stats.json"
+  }
+}

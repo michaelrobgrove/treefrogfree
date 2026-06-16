@@ -29,6 +29,13 @@
  *  and keeps us from leaking the base64 form into any per-
  *  request logs. */
 
+/** Environment interface for crypto operations. */
+export interface CryptoEnv {
+    /** Base64-encoded 32-byte AES-GCM key for encrypting panel passwords. */
+    PANEL_PASSWORD_ENC_KEY?: string;
+    [key: string]: unknown;
+}
+
 const KEY_ENV = "PANEL_PASSWORD_ENC_KEY";
 const KEY_VERSION = "v1:";
 
@@ -37,7 +44,7 @@ let cachedKey: { raw: string; key: CryptoKey } | null = null;
 /** Returns the per-isolate CryptoKey, or null if the env var
  *  is missing/invalid. Callers must handle the null case
  *  (treat the account as un-provisioned rather than crash). */
-export async function getOrCreateKey(env: Record<string, unknown>): Promise<CryptoKey | null> {
+export async function getOrCreateKey(env: CryptoEnv): Promise<CryptoKey | null> {
     const raw = String(env[KEY_ENV] || "");
     if (!raw) return null;
     if (cachedKey && cachedKey.raw === raw) return cachedKey.key;
@@ -67,7 +74,7 @@ export async function getOrCreateKey(env: Record<string, unknown>): Promise<Cryp
  *  base64-encoded ciphertext (suitable for direct KV
  *  storage), or null if encryption failed. */
 export async function encryptSecret(
-    env: Record<string, unknown>,
+    env: CryptoEnv,
     plaintext: string,
 ): Promise<string | null> {
     if (!plaintext) return null;
@@ -90,7 +97,7 @@ export async function encryptSecret(
  *  Returns the plaintext, or null if decryption failed (bad
  *  key, tampered ciphertext, wrong version, etc.). */
 export async function decryptSecret(
-    env: Record<string, unknown>,
+    env: CryptoEnv,
     ciphertext: string | null,
 ): Promise<string | null> {
     if (!ciphertext) return null;

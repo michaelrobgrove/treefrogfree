@@ -1,0 +1,76 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/michael/AppData/Roaming/npm/node_modules/codetree-claude/dist/hook/pre-tool-use.js\""
+          }
+        ],
+        "matcher": "Read|Grep|Glob"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/michael/AppData/Roaming/npm/node_modules/codetree-claude/dist/hook/post-tool-use.js\""
+          }
+        ],
+        "matcher": "Read|Grep|Glob|Edit|Write|codetree_read|codetree_search"
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/michael/AppData/Roaming/npm/node_modules/codetree-claude/dist/hook/session-start.js\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/michael/AppData/Roaming/npm/node_modules/codetree-claude/dist/hook/stop.js\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/michael/AppData/Roaming/npm/node_modules/codetree-claude/dist/hook/user-prompt-submit.js\""
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/michael/AppData/Roaming/npm/node_modules/codetree-claude/dist/hook/pre-compact.js\""
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"C:/Users/michael/AppData/Roaming/npm/node_modules/codetree-claude/dist/hook/post-compact.js\""
+          }
+        ]
+      }
+    ]
+  }
+}

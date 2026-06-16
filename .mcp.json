@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "codetree": {
+      "command": "node",
+      "args": [
+        "C:/Users/michael/AppData/Roaming/npm/node_modules/codetree-claude/dist/server/mcp-server.js"
+      ],
+      "cwd": "d:\\SyncThings\\Projects\\treefrogfree",
+      "env": {
+        "CODETREE_PROJECT_ROOT": "d:\\SyncThings\\Projects\\treefrogfree"
+      }
+    }
+  }
+}
