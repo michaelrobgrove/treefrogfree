@@ -119,99 +119,307 @@ def group_brand_name(group: str) -> str:
 # Free M3U sources have wildly inconsistent group titles. "Animation",
 # "Animation Classics", "Animation Kids", "Animación", "Cartoons", and
 # "Kids" all mean roughly the same thing. Without consolidation, the
-# public site shows 81 categories, half with 1-2 channels — useless
+# public site shows 100+ categories, half with 1-2 channels — useless
 # for navigation.
 #
 # This map collapses known variants to a canonical display name. The
 # key match is a normalized substring; e.g. "animation classics" maps
-# to "Animation". The list is intentionally conservative — anything
-# we don't recognize falls through to its raw group_title (so a new
-# M3U source can still surface new categories).
+# to "Animation". Anything we don't recognize falls through to
+# "Other" so the public UI never has more than ~30 distinct category
+# pills (the 30 canonical names below + "Other" as the catchall).
 #
 # To add a consolidation, append a tuple (needle, canonical) where
 # `needle` is a substring of normalize(group_title). The first
 # matching needle wins; keep more specific needles above general ones.
 _CATEGORY_CANONICAL: tuple[tuple[str, str], ...] = (
-    # ── Animation & kids ──
+    # ── Anime (must precede Animation; "anime" is a substring of
+    #    "animation", so without this rule, all animation channels
+    #    would route to Anime by alphabetical accident) ──
+    ("anime", "Anime"),
+    ("manga", "Anime"),
+    # ── Animation & cartoons ──
     ("animacion", "Animation"),
     ("animation", "Animation"),
     ("cartoon", "Animation"),
+    ("south park", "Animation"),
+    # ── Kids ──
     ("kids", "Kids"),
     ("children", "Kids"),
+    ("child", "Kids"),
     ("preschool", "Kids"),
+    ("jeunesse", "Kids"),
+    ("ninos", "Kids"),
+    ("junior", "Kids"),
     # ── News ──
     ("news", "News"),
     ("noticias", "News"),
+    ("notizie", "News"),
+    ("nachrichten", "News"),
+    ("actualite", "News"),
+    ("headline", "News"),
+    ("legislative", "News"),
+    ("parliament", "News"),
+    ("business", "News"),
     # ── Sports ──
     ("sport", "Sports"),
+    ("deporte", "Sports"),
     ("deportes", "Sports"),
-    # ── Movies & series ──
+    ("futbol", "Sports"),
+    ("fussball", "Sports"),
+    ("calcio", "Sports"),
+    ("basketball", "Sports"),
+    ("baseball", "Sports"),
+    ("football", "Sports"),
+    ("soccer", "Sports"),
+    ("hockey", "Sports"),
+    ("tennis", "Sports"),
+    ("golf", "Sports"),
+    # ── Movies ──
     ("movie", "Movies"),
     ("peliculas", "Movies"),
+    ("pelicula", "Movies"),
     ("cinema", "Movies"),
+    ("cine", "Movies"),
+    ("film", "Movies"),
+    ("filme", "Movies"),
+    ("binge", "Movies"),
+    # ── Series ──
+    ("serie", "Series"),
     ("series", "Series"),
+    ("serien", "Series"),
+    ("serial", "Series"),
     ("tv show", "Series"),
+    ("telenovela", "Series"),
+    # ── Comedy ──
+    ("comedy", "Comedy"),
+    ("comedie", "Comedy"),
+    ("comedia", "Comedy"),
+    ("commedia", "Comedy"),
+    ("humor", "Comedy"),
+    # ── Crime (must come before Drama so "Crimen Drama" routes
+    #    to Crime, not Drama) ──
+    ("crime", "Crime"),
+    ("crimen", "Crime"),
+    ("crimine", "Crime"),
+    ("true crime", "Crime"),
+    ("criminal", "Crime"),
+    ("krimi", "Crime"),
+    ("mystery", "Crime"),
+    # ── Drama ──
+    ("drama", "Drama"),
+    ("dramatique", "Drama"),
+    # ── Action & Adventure ──
+    ("action", "Action & Adventure"),
+    ("adventure", "Action & Adventure"),
+    ("aventuras", "Action & Adventure"),
+    ("avventura", "Action & Adventure"),
+    ("abenteuer", "Action & Adventure"),
+    # ── Reality ──
+    ("reality", "Reality"),
+    ("realite", "Reality"),
+    ("realidad", "Reality"),
+    ("tele realite", "Reality"),
+    ("competition", "Reality"),
+    # ── Game Shows ──
+    ("game show", "Game Shows"),
+    ("gameshow", "Game Shows"),
+    ("jeu", "Game Shows"),
+    ("jeux", "Game Shows"),
+    ("gioco", "Game Shows"),
+    ("spiele", "Game Shows"),
+    # ── Entertainment (catchall for variety/talk/general/lifestyle
+    #    shows that don't fit a more specific bucket) ──
+    ("entertainment", "Entertainment"),
+    ("divertissement", "Entertainment"),
+    ("divertimento", "Entertainment"),
+    ("intrattenimento", "Entertainment"),
+    ("entretenimiento", "Entertainment"),
+    ("variety", "Entertainment"),
+    ("talk show", "Entertainment"),
+    ("general", "Entertainment"),
+    ("infotainment", "Entertainment"),
+    ("pop culture", "Entertainment"),
+    # ── Documentary ──
+    ("documentary", "Documentary"),
+    ("documentales", "Documentary"),
+    ("documental", "Documentary"),
+    ("documentari", "Documentary"),
+    ("documentaire", "Documentary"),
+    ("history", "Documentary"),
+    ("paranormal", "Documentary"),
+    # ── Education ──
+    ("education", "Education"),
+    ("educacion", "Education"),
+    ("educazione", "Education"),
+    ("bildung", "Education"),
+    ("cultura", "Education"),
+    ("culture", "Education"),
+    ("kultur", "Education"),
+    ("learning", "Education"),
+    # ── Science & Nature ──
+    ("nature", "Science & Nature"),
+    ("naturaleza", "Science & Nature"),
+    ("natura", "Science & Nature"),
+    ("science", "Science & Nature"),
+    ("scienza", "Science & Nature"),
+    ("wildlife", "Science & Nature"),
+    ("animal", "Science & Nature"),
+    ("fauna", "Science & Nature"),
+    ("outdoor", "Science & Nature"),
+    # ── Tech ──
+    ("tech", "Tech"),
+    ("technology", "Tech"),
+    ("gadget", "Tech"),
+    ("computer", "Tech"),
+    ("computing", "Tech"),
     # ── Music ──
     ("music", "Music"),
     ("musica", "Music"),
+    ("musik", "Music"),
+    ("musique", "Music"),
     ("radio", "Music"),
-    # ── Documentary & education ──
-    ("documentary", "Documentary"),
-    ("documental", "Documentary"),
-    ("education", "Education"),
-    ("educacion", "Education"),
-    # ── Religious ──
-    ("religion", "Religious"),
-    ("religious", "Religious"),
-    ("cristiana", "Religious"),
-    ("islam", "Religious"),
-    # ── Lifestyle & cooking ──
+    ("musical", "Music"),
+    # ── Music Videos ──
+    ("music video", "Music Videos"),
+    ("videoclip", "Music Videos"),
+    # ── Lifestyle (cooking, food, travel, fashion, home, design) ──
     ("cooking", "Lifestyle"),
+    ("cuisine", "Lifestyle"),
+    ("cucina", "Lifestyle"),
     ("food", "Lifestyle"),
+    ("gourmet", "Lifestyle"),
     ("travel", "Lifestyle"),
-    ("lifestyle", "Lifestyle"),
+    ("voyage", "Lifestyle"),
+    ("viaggi", "Lifestyle"),
+    ("viajes", "Lifestyle"),
     ("fashion", "Lifestyle"),
-    # ── Nature & science ──
-    ("nature", "Nature"),
-    ("science", "Science"),
-    ("naturaleza", "Nature"),
-    # ── Weather ──
-    ("weather", "Weather"),
-    ("clima", "Weather"),
-    # ── General entertainment ──
-    ("entertainment", "Entertainment"),
-    ("entretenimiento", "Entertainment"),
-    ("variety", "Entertainment"),
+    ("moda", "Lifestyle"),
+    ("lifestyle", "Lifestyle"),
+    ("home", "Lifestyle"),
+    ("design", "Lifestyle"),
+    ("relax", "Lifestyle"),
+    # ── Auto ──
+    ("auto", "Auto"),
+    ("automotive", "Auto"),
+    ("automobile", "Auto"),
+    ("cars", "Auto"),
+    ("racing", "Auto"),
+    ("motor", "Auto"),
+    ("motorsport", "Auto"),
+    # ── Shopping ──
+    ("shop", "Shopping"),
+    ("shopping", "Shopping"),
+    ("tienda", "Shopping"),
+    ("einkaufen", "Shopping"),
+    ("infomercial", "Shopping"),
+    # ── Religious ──
+    ("religious", "Religious"),
+    ("religion", "Religious"),
+    ("faith", "Religious"),
+    ("cristiana", "Religious"),
+    ("cristian", "Religious"),
+    ("christian", "Religious"),
+    ("islam", "Religious"),
+    ("muslim", "Religious"),
+    ("jewish", "Religious"),
+    ("judaica", "Religious"),
+    ("hindu", "Religious"),
+    ("buddh", "Religious"),
+    ("gospel", "Religious"),
+    ("devotional", "Religious"),
+    ("spiritual", "Religious"),
     # ── Classic TV ──
     ("classic", "Classic TV"),
     ("retro", "Classic TV"),
-    # ── Shop / infomercial ──
-    ("shop", "Shopping"),
-    ("shopping", "Shopping"),
-    ("infomercial", "Shopping"),
-    # ── Local / regional ──
+    ("vintage", "Classic TV"),
+    ("western", "Classic TV"),
+    # ── Weather ──
+    ("weather", "Weather"),
+    ("clima", "Weather"),
+    ("meteo", "Weather"),
+    ("wetter", "Weather"),
+    # ── Local ──
     ("local", "Local"),
     ("regional", "Local"),
+    ("regionale", "Local"),
+    ("lokal", "Local"),
+    # ── Horror ──
+    ("horror", "Horror"),
+    ("terror", "Horror"),
+    ("scary", "Horror"),
+    ("halloween", "Horror"),
+    # ── Sci-Fi & Fantasy ──
+    ("sci fi", "Sci-Fi & Fantasy"),
+    ("sci-fi", "Sci-Fi & Fantasy"),
+    ("scifi", "Sci-Fi & Fantasy"),
+    ("fantasy", "Sci-Fi & Fantasy"),
+    ("fantasie", "Sci-Fi & Fantasy"),
+    ("ciencia ficcion", "Sci-Fi & Fantasy"),
 )
+
+
+# Source-name fragments that aren't real categories. If a M3U
+# source ships its own name as the group_title (e.g. "DistroTV",
+# "TCL TOP 15", "TV Favorites") we route to "Other" rather than
+# create a one-off category pill for the operator to wade through.
+_SOURCE_NAME_FRAGMENTS: frozenset[str] = frozenset({
+    # Bare source names
+    "distrotv", "pluto", "pluto tv", "plex", "plex tv", "tubi",
+    "xumo", "samsung", "samsung tv", "samsung tv plus", "tcl",
+    "tcl tv", "airy", "local now", "iptv", "iptv org",
+    "iptvorg",
+    # Source-flavored top-N lists
+    "tcl top 15", "tv favorites",
+    # Language tags — not categories
+    "espanol", "latino", "en espanol", "allemand", "aleman",
+})
 
 
 def canonical_category(group_title: str) -> str:
     """Map a raw M3U group_title to a canonical display name.
 
-    Returns the input (stripped) if no rule matches. The slug
-    helper downstream handles the URL-safe form.
+    Returns "Other" if no rule matches. The slug helper downstream
+    handles the URL-safe form.
+
+    Source-flavored group_titles (e.g. "DistroTV | US | Business")
+    are split on "|" or "/" — only the LAST segment is considered
+    for canonicalization, so source/region prefixes don't leak into
+    the public category list.
     """
     g = (group_title or "").strip()
     if not g:
         return "Other"
+
+    # Some BuddyChewChew generators pack source-flavor prefixes into
+    # the group_title, e.g. "DistroTV | US | Business". Only the
+    # last segment is the real category. The "/" rule covers Xumo's
+    # "Region/Category" form.
+    if "|" in g:
+        g = g.rsplit("|", 1)[-1].strip()
+    if "/" in g:
+        g = g.rsplit("/", 1)[-1].strip()
+
     n = normalize(g)
     if not n:
         return "Other"
+
+    # Empty or generic group_titles — "Undefined" (175 channels
+    # in the wild), "Other", "N/A", bare source names, language
+    # tags — all collapse to "Other".
+    if n in ("undefined", "n a", "na", "default", "other",
+             "uncategorized", "general purpose", "misc",
+             "miscellaneous"):
+        return "Other"
+    if n in _SOURCE_NAME_FRAGMENTS:
+        return "Other"
+
     for needle, canonical in _CATEGORY_CANONICAL:
         if needle in n:
             return canonical
-    # No rule matched — return the original (capitalized for display).
-    return g
+    # No rule matched — fall through to "Other" rather than create
+    # a new one-off pill. Operators can extend _CATEGORY_CANONICAL
+    # when a new category surfaces in volume.
+    return "Other"
 
 
 # ── Manual multi-region channel consolidation ──────────────────────────

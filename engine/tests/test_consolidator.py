@@ -191,12 +191,13 @@ class TestCanonicalCategory:
         assert canonical_category("Música") == "Music"
         assert canonical_category("Radio") == "Music"
 
-    def test_unknown_category_falls_through(self):
-        # A new M3U source can introduce categories we don't know
-        # about. The helper should return the original string (not
-        # crash, not return "Other") so the UI still shows the pill.
-        assert canonical_category("Astrology") == "Astrology"
-        assert canonical_category("Bicycle Racing") == "Bicycle Racing"
+    def test_unknown_category_falls_through_to_other(self):
+        # Categories we don't recognize collapse to "Other" rather
+        # than create a one-off pill. Operators extend
+        # _CATEGORY_CANONICAL when a new category surfaces in volume.
+        assert canonical_category("Astrology") == "Other"
+        assert canonical_category("Quantum Physics") == "Other"
+        assert canonical_category("Origami") == "Other"
 
     def test_empty_and_none_like(self):
         assert canonical_category("") == "Other"
@@ -213,7 +214,6 @@ class TestCanonicalCategory:
         # never blocks a canonicalization. "24/7" → "247" (digits
         # kept) so the News needle still matches.
         assert canonical_category("24/7 News") == "News"
-        assert canonical_category("Action & Adventure") == "Action & Adventure"  # falls through cleanly
         # The helper never raises on weird punctuation.
         canonical_category("*** weird !!! group ???")
 
@@ -225,6 +225,145 @@ class TestCanonicalCategory:
         from engine.consolidator import group_slug
         assert group_slug(canonical_category("Animation Classics")) == "animation"
         assert group_slug(canonical_category("Local News")) == "news"
+
+    # ── Long-tail consolidation: the 114-category problem ──
+    # The M3U sources from the BuddyChewChew ecosystem and apsatt
+    # use wildly inconsistent group_titles across 7 languages. The
+    # canonical_category helper is the single place we collapse
+    # them into ~30 useful pills. These tests pin the mapping for
+    # the variants that showed up in the production catalog after
+    # the first bulk import (June 2026).
+
+    def test_undefined_and_bare_source_names_go_to_other(self):
+        # The screenshot showed 175 channels with group_title="Undefined"
+        # and several with bare source names. All collapse to "Other"
+        # so the public site doesn't show 5+ "DistroTV", "TCL TOP 15",
+        # "TV Favorites" pills with 1-7 channels each.
+        assert canonical_category("Undefined") == "Other"
+        assert canonical_category("DistroTV") == "Other"
+        assert canonical_category("TCL TOP 15") == "Other"
+        assert canonical_category("TV Favorites") == "Other"
+
+    def test_language_tags_go_to_other(self):
+        # "En Español", "Latino", "Latinoamérica" etc. are LANGUAGE
+        # tags, not categories. The public UI can add a language
+        # filter separately; the category list should not include
+        # 41 Spanish-language channels as a pseudo-category.
+        assert canonical_category("En Español") == "Other"
+        assert canonical_category("Español") == "Other"
+        assert canonical_category("Latino") == "Other"
+        assert canonical_category("En Espa\xf1ol") == "Other"
+
+    def test_pipe_separated_group_titles_take_last_segment(self):
+        # The BuddyChewChew DistroTV generator packs source-flavor
+        # prefixes into the group_title, e.g. "DistroTV | US | Business".
+        # Only the LAST segment is the real category. Source/region
+        # prefixes must not leak into the public category list.
+        assert canonical_category("DistroTV | US | Business") == "News"
+        # "Sport" comes through the Sport needle.
+        assert canonical_category("Plex | US | Sport") == "Sports"
+        # Source-only trailing → Other.
+        assert canonical_category("Plex | US") == "Other"
+        assert canonical_category("DistroTV |") == "Other"
+
+    def test_slash_separated_group_titles_take_last_segment(self):
+        # Xumo uses "Region/Category" form.
+        assert canonical_category("US/News") == "News"
+        assert canonical_category("US/Movies") == "Movies"
+
+    def test_jeunesse_collapses_to_kids(self):
+        # French for "Youth" — the French Pluto/Plex feed uses this.
+        assert canonical_category("Jeunesse") == "Kids"
+
+    def test_intrattenimento_collapses_to_entertainment(self):
+        # Italian for "Entertainment".
+        assert canonical_category("Intrattenimento") == "Entertainment"
+
+    def test_divertissement_collapses_to_entertainment(self):
+        # French for "Entertainment".
+        assert canonical_category("Divertissement") == "Entertainment"
+
+    def test_general_collapses_to_entertainment(self):
+        # "General" (219 channels) is too broad to be its own pill;
+        # it covers variety + talk shows + uncategorized entertainment
+        # feeds.
+        assert canonical_category("General") == "Entertainment"
+
+    def test_serien_and_seriale_collapses_to_series(self):
+        # German + Italian plurals.
+        assert canonical_category("Serien") == "Series"
+        assert canonical_category("Seriale") == "Series"
+
+    def test_cucina_viaggi_collapses_to_lifestyle(self):
+        # Italian "Cooking & Travel" — a single source-flavored pill
+        # that doesn't make sense as its own category.
+        assert canonical_category("Cucina & Viaggi") == "Lifestyle"
+
+    def test_viajes_y_cocina_collapses_to_lifestyle(self):
+        # Spanish "Travel & Cooking".
+        assert canonical_category("Viajes y Cocina") == "Lifestyle"
+
+    def test_voyages_et_gastronomie_collapses_to_lifestyle(self):
+        # French "Travel & Gastronomy".
+        assert canonical_category("Voyages et Gastronomie") == "Lifestyle"
+
+    def test_faith_and_family_collapses_to_religious(self):
+        # "Faith & Family" is a TV genre block from faith-based
+        # distributors; route to Religious (a Faith-only pill would
+        # have ~1 channel and not be useful as a filter).
+        assert canonical_category("Faith & Family") == "Religious"
+
+    def test_true_crime_collapses_to_crime(self):
+        # 20 channels; standalone pill too small to be useful.
+        assert canonical_category("True Crime") == "Crime"
+
+    def test_westerns_collapses_to_classic_tv(self):
+        # "Westerns" + "Westerns & Country" → "Classic TV".
+        assert canonical_category("Westerns") == "Classic TV"
+        assert canonical_category("Westerns & Country") == "Classic TV"
+
+    def test_telenovela_collapses_to_series(self):
+        # Spanish-language soap operas — categories are series.
+        assert canonical_category("Telenovela") == "Series"
+
+    def test_crime_drama_goes_to_crime(self):
+        # Order matters: "crimen drama" should hit Crime first
+        # (because the "crimen" needle is more specific), not Drama.
+        assert canonical_category("Crimen Drama") == "Crime"
+
+    def test_comedia_drama_goes_to_comedy(self):
+        # "Comedia + Drama" — Comedy wins because the "comedia"
+        # needle is in the substring before "drama".
+        assert canonical_category("Comedia + Drama") == "Comedy"
+
+    def test_binge_worthy_collapses_to_movies(self):
+        # Tubi's marketing label for "long-form movie content".
+        assert canonical_category("Binge-worthy") == "Movies"
+
+    def test_heating_up_competition_collapses_to_reality(self):
+        # Sports reality-TV subgenre; reality is the closer fit.
+        assert canonical_category("Heating up the Competition") == "Reality"
+
+    def test_anime_does_not_match_animation(self):
+        # "anime" is a substring of "animation" — order matters.
+        # "anime" needle comes first, so anime channels go to Anime
+        # (their own pill) and animation channels go to Animation.
+        assert canonical_category("Anime") == "Anime"
+        assert canonical_category("Animation") == "Animation"
+        # Plural is fine too.
+        assert canonical_category("Animation") == "Animation"
+
+    def test_max_canonical_count_is_bounded(self):
+        # Sanity: count how many distinct canonical names the
+        # production-shaped data produces. We allow up to 35 (30
+        # meaningful + a few "Other"-adjacent) so the operator has
+        # headroom for edge cases without going back to the 114-
+        # category problem.
+        from engine.consolidator import _CATEGORY_CANONICAL
+        canon_names = {c for _, c in _CATEGORY_CANONICAL} | {"Other"}
+        assert len(canon_names) <= 35, (
+            f"canonical category set grew to {len(canon_names)}: {sorted(canon_names)}"
+        )
 
 
 class TestCanonicalChannelName:
