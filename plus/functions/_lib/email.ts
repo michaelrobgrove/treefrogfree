@@ -190,6 +190,47 @@ Update billing: ${opts.update_url}
     return { subject, html, text };
 }
 
+/** Email template for renewal nudges sent by the cron endpoint.
+ *  Sent to customers 7, 3, and 0 days before expiry. */
+export function renewalNudgeEmail(opts: {
+    customer_name: string;
+    customer_email: string;
+    expires_at: string | null;
+    days_remaining: number;
+    dashboard_url: string;
+}): { subject: string; html: string; text: string } {
+    const subject = `Tree Frog Plus renewal reminder: ${opts.days_remaining} day${opts.days_remaining !== 1 ? 's' : ''} remaining`;
+    const html = layout(`
+        <h2 style="margin:0 0 12px;font-size:20px;">Renewal reminder</h2>
+        <p style="margin:0 0 16px;color:#cbd5e1;">
+          Your Tree Frog Plus subscription expires in <strong style="color:#22c55e;">${opts.days_remaining} day${opts.days_remaining !== 1 ? 's' : ''}</strong>.
+        </p>
+        <p style="margin:0 0 16px;color:#cbd5e1;">
+          Renew now to avoid interruption.
+        </p>
+        <div style="text-align:center;margin:24px 0 8px;">
+          <a href="${escapeHtml(opts.dashboard_url)}"
+             style="display:inline-block;background:#22c55e;color:#111827;font-weight:600;text-decoration:none;padding:14px 32px;border-radius:8px;">
+            Renew now
+          </a>
+        </div>
+        <p style="margin:0 0 8px;color:#94a3b8;font-size:13px;">
+          Expiry date: ${opts.expires_at || '(unknown)'}
+        </p>
+    `);
+    const text = `Tree Frog Plus renewal reminder
+
+Your subscription expires in ${opts.days_remaining} day${opts.days_remaining !== 1 ? 's' : ''}.
+
+Renew now to avoid interruption.
+
+Renew: ${opts.dashboard_url}
+
+Expiry date: ${opts.expires_at || '(unknown)'}
+`;
+    return { subject, html, text };
+}
+
 export function renewalReceiptEmail(opts: {
     email: string;
     new_expire: string;
@@ -343,4 +384,54 @@ export function adminAddress(): string {
     const v = (globalThis as any).ADMIN_EMAIL;
     if (typeof v === "string" && v) return v;
     return "admin@tfplus.stream";
+}
+
+/** Email template for the public contact form on index.html.
+ *  Sent to the operator when a customer submits the contact form. */
+export function contactFormEmail(opts: {
+    sender_name: string;
+    sender_email: string;
+    subject: string;
+    message: string;
+    dashboard_url: string;
+}): { subject: string; html: string; text: string } {
+    const subject = `Contact form: ${opts.subject}`;
+    const safeMsg = escapeHtml(opts.message || "(no message)");
+    const html = layout(`
+        <h2 style="margin:0 0 12px;font-size:20px;">Contact form submission</h2>
+        <p style="margin:0 0 16px;color:#cbd5e1;">
+          A customer submitted the contact form on the website.
+        </p>
+
+        <h3 style="margin:24px 0 8px;font-size:14px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;">Sender</h3>
+        <table style="width:100%;border-collapse:collapse;">
+          ${credRow("Name", opts.sender_name)}
+          ${credRow("Email", opts.sender_email)}
+        </table>
+
+        <h3 style="margin:24px 0 8px;font-size:14px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;">Message</h3>
+        <p style="margin:0 0 8px;color:#94a3b8;font-size:13px;">Subject: ${escapeHtml(opts.subject)}</p>
+        <div style="background:#0f172a;border-left:3px solid #22c55e;padding:12px 16px;border-radius:4px;color:#cbd5e1;white-space:pre-wrap;">${safeMsg}</div>
+
+        <div style="text-align:center;margin:28px 0 8px;">
+          <a href="${escapeHtml(opts.dashboard_url)}"
+             style="display:inline-block;background:#22c55e;color:#111827;font-weight:600;text-decoration:none;padding:12px 24px;border-radius:8px;">
+            Open dashboard
+          </a>
+        </div>
+    `);
+    const text = `Contact form submission
+
+Sender
+  Name:  ${opts.sender_name}
+  Email: ${opts.sender_email}
+
+Subject: ${opts.subject}
+
+Message
+${opts.message || "(no message)"}
+
+Dashboard: ${opts.dashboard_url}
+`;
+    return { subject, html, text };
 }

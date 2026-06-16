@@ -276,6 +276,32 @@ sends `PAYMENT.CAPTURE.REFUNDED`. We mark the account
 `refunded` and call Gold Panel `device_status disable` to
 shut the line off.
 
+### Contact Support
+
+Customers can submit a contact form on the landing page (`index.html`). The form
+collects name, email, subject, and message, and posts to `POST /api/account/contact`
+with `kind: "contact"`. The handler validates the input and sends an email to the
+operator's support address. The submit button is disabled during submission to
+prevent duplicate submissions.
+
+### Renewal Nudges
+
+A cron endpoint (`GET /api/cron/renewal-nudges`) sends renewal reminder emails to
+accounts whose lines are expiring soon. The endpoint requires an `X-Cron-Key` header
+matching the `CRON_SECRET` environment variable for authentication.
+
+The cron checks each account and sends emails at three thresholds:
+- **7 days before expiry**: First reminder
+- **3 days before expiry**: Second reminder  
+- **On expiry day**: Final reminder
+
+Set the cron in Cloudflare with a schedule like `0 9 * * *` (daily at 9 AM UTC).
+Add the secret:
+
+```bash
+wrangler pages secret put CRON_SECRET
+```
+
 ---
 
 ## Open issues

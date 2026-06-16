@@ -1,6 +1,6 @@
 /** PUT/POST /api/account/contact
  *
- *  Two flows, chosen by the `kind` field in the body:
+ *  Three flows, chosen by the `kind` field in the body:
  *
  *  1) kind omitted (the default — the existing "Edit profile"
  *     form on the dashboard):
@@ -29,6 +29,17 @@
  *     — the dashboard's renew menu stays hidden and the
  *     customer can't self-serve.
  *
+ *  3) kind: "contact" (public contact form on index.html):
+ *     Body: {
+ *       kind:    "contact",
+ *       name:    string,          // sender's name
+ *       email:   string,          // sender's email
+ *       subject: string,          // message subject
+ *       message: string,          // message body
+ *     }
+ *     Sends an email to the operator with the contact form
+ *     details. The customer does NOT need to be signed in.
+ *
  *  Returns: { ok: true } on success, or an error. */
 
 import type { Account, ContactHandles } from "../../_lib/kv";
@@ -51,7 +62,15 @@ interface CustomRenewalBody {
     message: string;
 }
 
-type ContactBody = ProfileBody | CustomRenewalBody;
+interface ContactFormBody {
+    kind: "contact";
+    name: string;
+    email: string;
+    subject: string;
+    message: string;
+}
+
+type ContactBody = ProfileBody | CustomRenewalBody | ContactFormBody;
 
 function strip(s: unknown, max: number): string | null {
     if (s === null) return null;
@@ -76,6 +95,11 @@ export const onRequestPut = async (ctx: PagesContext): Promise<Response> => {
     let body: ContactBody;
     try { body = await ctx.request.json() as ContactBody; }
     catch (e) { return json({ error: "Invalid JSON" }, 400); }
+
+    // Public contact form path (no auth required).
+    if ((body as ContactFormBody).kind === "contact") {
+        return handleContactForm(ctx, body as ContactFormBody);
+    }
 
     const { getSessionAccount } = await import("../../_lib/session");
 
@@ -188,6 +212,46 @@ async function handleCustomRenewal(
         await email.sendEmail({ to: email.adminAddress(), ...tmpl });
     } catch (e) {
         console.error("contact: custom-renewal email failed:", (e as Error).message);
+    }
+
+    return json({ ok: true });
+}
+
+async function handleContactForm(
+    ctx: PagesContext,
+    body: ContactFormBody,
+): Promise<Response> {
+    const { name, email, subject, message } = body;
+
+    // Validate required fields
+    if (!name || !email || !subject || !message) {
+        return json({ error: "All fields are required." }, 400);
+    }
+
+    const nameStr = String(name).trim().slice(0, 100);
+    const emailStr = String(email).trim().toLowerCase().slice(0, 254);
+    const subjectStr = String(subject).trim().slice(0, 200);
+    const messageStr = String(message).trim().slice(0, 5000);
+
+    if (!isValidEmail(emailStr)) {
+        return json({ error: "A valid email is required." }, 400);
+    }
+
+    // Send email to operator
+    try {
+        const email = await import("../../_lib/email");
+        const base = String((ctx.env as any).PUBLIC_BASE_URL || "https://beta.tfplus.stream");
+        const tmpl = email.contactFormEmail({
+            sender_name: nameStr,
+            sender_email: emailStr,
+            subject: subjectStr,
+            message: messageStr,
+            dashboard_url: `${base}/dashboard.html`,
+        });
+        await email.sendEmail({ to: email.adminAddress(), ...tmpl });
+    } catch (e) {
+        console.error("contact: form email failed:", (e as Error).message);
+        // Don't fail the request if email send fails
     }
 
     return json({ ok: true });
