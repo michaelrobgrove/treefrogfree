@@ -16,8 +16,7 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "resolveJsonModule": true,
-    "noEmit": true,
-    "typeRoots": ["../edge/node_modules/@types", "../edge/node_modules"]
+    "noEmit": true
   },
   "include": ["functions/**/*"]
 }
