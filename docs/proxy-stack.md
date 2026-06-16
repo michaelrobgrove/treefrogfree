@@ -2,27 +2,34 @@
 
 Two free, ad-supported IPTV source proxies that sit alongside the
 main `tf-engine` to add ~550 channels (Samsung TV Plus + DistroTV),
-plus six remote-M3U sources (Pluto US/CA, Local Now, Plex
-US/CA, Xumo) imported directly from public GitHub raw URLs with
-no containers.
+plus twelve remote-M3U sources (Pluto US/CA, Local Now, Plex
+US/CA, Xumo, Tubi, Samsung TV Plus KR, Airy, TCL, DistroTV US/CA
+with EPG) imported directly from public GitHub raw URLs with no
+containers.
 
 ## What's in the box
 
-| Source | Type | Port / URL | ~Channels | Auth |
-|---|---|---|---|---|
-| DistroTV | Container | **8787** | 150 | None |
-| Samsung TV Plus | Container | **3001** | 400 | None |
-| Pluto US | Remote M3U | `github.com/BuddyChewChew/pluto/main/pluto_us.m3u` | ~250 | None |
-| Pluto CA | Remote M3U | `github.com/BuddyChewChew/pluto/main/pluto_ca.m3u` | ~75 | None |
-| Local Now | Remote M3U | `apsattv.com/localnow.m3u` | ~30 | None |
-| Plex Fast (US) | Remote M3U | `github.com/BuddyChewChew/plex-alt-fast-channels/main/playlists/plex_us.m3u` | ~400 | None |
-| Plex Fast (CA) | Remote M3U | `github.com/BuddyChewChew/plex-alt-fast-channels/main/playlists/plex_ca.m3u` | ~75 | None |
-| Xumo | Remote M3U | `github.com/BuddyChewChew/xumo-playlist-generator/main/playlists/xumo_playlist.m3u` | ~85 | None |
+| Source | Type | Port / URL | ~Channels | Auth | EPG |
+|---|---|---|---|---|---|
+| DistroTV (container) | Container | **8787** | 150 | None | none |
+| Samsung TV Plus US (container) | Container | **3001** | 400 | None | `/epg.xml` |
+| Pluto US | Remote M3U | `BuddyChewChew/pluto/.../pluto_us.m3u` | 250 | None | M3U header |
+| Pluto CA | Remote M3U | `BuddyChewChew/pluto/.../pluto_ca.m3u` | 75 | None | M3U header |
+| Local Now | Remote M3U | `apsattv.com/localnow.m3u` | 30 | None | explicit (`i.mjh.nz`) |
+| Plex US | Remote M3U | `BuddyChewChew/plex-alt-fast-channels/.../plex_us.m3u` | 400 | None | M3U header |
+| Plex CA | Remote M3U | `BuddyChewChew/plex-alt-fast-channels/.../plex_ca.m3u` | 75 | None | M3U header |
+| Xumo | Remote M3U | `BuddyChewChew/xumo-playlist-generator/.../xumo_playlist.m3u` | 85 | None | M3U header |
+| Tubi | Remote M3U | `BuddyChewChew/tubi-scraper/.../tubi_playlist.m3u` | 300 | None | M3U header |
+| Samsung TV Plus KR | Remote M3U | `BuddyChewChew/samsungtvplus/.../samsung_tvplus.m3u` | 200 | None | none (i.mjh.nz if you want) |
+| Airy | Remote M3U | `BuddyChewChew/airy-playlist-generator/.../airy_channels.m3u` | 60 | None | `x-tvg-url=` header |
+| TCL | Remote M3U | `BuddyChewChew/tcl-playlist-generator/.../tcl.m3u8` | 200 | None | `x-tvg-url=` header |
+| DistroTV US (remote) | Remote M3U | `BuddyChewChew/distro-playlist-generator/.../distrotv_US.m3u` | 150 | None | `distrotv.xml` |
+| DistroTV CA (remote) | Remote M3U | `BuddyChewChew/distro-playlist-generator/.../distrotv_CA.m3u` | 30 | None | `distrotv.xml` |
 
 The two containers bind to the host with `network_mode: host` and
 the `engine/docker-compose.proxies.yml` file caps them at a
 combined ~0.35 vCPU / 384 MB RAM so they coexist with `tf-engine`
-and AIOstreams. The six remote M3Us are zero-cost — no extra
+and AIOstreams. The twelve remote M3Us are zero-cost — no extra
 container, no port, no CPU.
 
 ### ⚠️ Host port allocation — read before binding anything
@@ -54,10 +61,14 @@ host differs, edit the `PORT` env var in
 > Pluto's CDN through a different egress path and works from
 > cloud IPs. That's what we use now.
 
-## 1. DistroTV — bring it up first
+## 1. DistroTV container — bring it up first
 
-DistroTV is the simplest of the two containers. It has no auth, no
-DB, and no admin UI — just a Python BaseHTTP listener.
+The DistroTV container is the simplest of the two containers. It
+has no auth, no DB, and no admin UI — just a Python BaseHTTP
+listener. It serves the combined DistroTV channel list (US + CA
+mixed). Use this container as the primary DistroTV source; the
+remote DistroTV US/CA M3Us (§3) are a useful supplement because
+they have an EPG the container doesn't.
 
 ```bash
 cd /opt/treefrogfree
@@ -78,7 +89,9 @@ cd /opt/treefrogfree/engine
 docker compose exec tf-engine python -m engine seed \
   --m3u http://127.0.0.1:8787/playlist.m3u \
   --label "DistroTV"
-# DistroTV doesn't publish XMLTV, so no epg-import call here.
+# The DistroTV container doesn't publish XMLTV. If you want an
+# EPG for DistroTV, import the remote distrotv.xml from §3
+# (DistroTV US + CA remote M3U + EPG).
 ```
 
 Expected result on the engine side:
@@ -92,7 +105,7 @@ The 0 new channels is correct: all 73 DistroTV streams were
 deduplicated against your existing 1714 by the
 `canonical_channel_name()` consolidator.
 
-## 2. Samsung TV Plus — port 3001
+## 2. Samsung TV Plus container — port 3001
 
 ```bash
 cd /opt/treefrogfree
@@ -124,21 +137,25 @@ docker compose exec tf-engine python -m engine epg-import \
   --url http://127.0.0.1:3001/epg.xml
 ```
 
-## 3. Pluto + Local Now + Plex + Xumo — remote M3Us (no container)
+## 3. Twelve remote M3U sources (no container)
 
-These five sources are public raw M3U files on GitHub (plus one
-on `apsattv.com`). They don't need a container, a port, or a
-process — the engine's `seed` command downloads the M3U the same
-way it imports any other URL. The maintainer regenerates the M3U
-on a schedule; the engine re-imports the freshest copy on each
-`seed` call.
+These are public raw M3U files on GitHub (plus one on
+`apsattv.com`). They don't need a container, a port, or a process
+— the engine's `seed` command downloads the M3U the same way it
+imports any other URL. The maintainer regenerates the M3U on a
+schedule; the engine re-imports the freshest copy on each `seed`
+call.
+
+Run them all in one block. Skip any source whose label you'd
+rather not have (the engine dedupes, so overlapping sources are
+safe but waste import time).
 
 ```bash
 cd /opt/treefrogfree/engine
 
 # ── Pluto US (250+ channels) ──────────────────────────────────
-# EPG is the M3U's own `url-tvg=` header. Don't need to set
-# it explicitly — the importer reads the M3U header.
+# EPG is the M3U's own `url-tvg=` header — the importer reads
+# it automatically, no need to call `epg-import` separately.
 docker compose exec tf-engine python -m engine seed \
   --m3u https://raw.githubusercontent.com/BuddyChewChew/pluto/main/pluto_us.m3u \
   --label "Pluto US"
@@ -169,11 +186,61 @@ docker compose exec tf-engine python -m engine seed \
   --label "Plex CA"
 
 # ── Xumo (~85 channels) ──────────────────────────────────────
-# EPG is the M3U's own `url-tvg=` header (points to
-# xumo_epg.xml.gz in the same repo).
+# EPG is the M3U's own `url-tvg=` header.
 docker compose exec tf-engine python -m engine seed \
   --m3u https://raw.githubusercontent.com/BuddyChewChew/xumo-playlist-generator/main/playlists/xumo_playlist.m3u \
   --label "Xumo"
+
+# ── Tubi (~300 free movies + channels) ───────────────────────
+# EPG is the M3U's own `url-tvg=` header (points to
+# tubi_epg.xml in the same repo). Tubi is a movie+TV service
+# with heavy ad breaks; not all engines deduplicate Tubi
+# entries against other FAST services, so you may see some
+# overlap with Pluto/Plex.
+docker compose exec tf-engine python -m engine seed \
+  --m3u https://raw.githubusercontent.com/BuddyChewChew/tubi-scraper/main/tubi_playlist.m3u \
+  --label "Tubi"
+
+# ── Samsung TV Plus (Korean) — ~200 channels ─────────────────
+# The Korean lineup. Complement to the US container (the
+# container is pinned REGIONS=us). The M3U does NOT include
+# a `url-tvg=` header; pin i.mjh.nz's SamsungTV epg explicitly
+# if you want EPG for the Korean channels.
+docker compose exec tf-engine python -m engine seed \
+  --m3u https://raw.githubusercontent.com/BuddyChewChew/samsungtvplus/main/output/samsung_tvplus.m3u \
+  --label "Samsung TV Plus KR"
+docker compose exec tf-engine python -m engine epg-import \
+  --url https://github.com/matthuisman/i.mjh.nz/raw/master/SamsungTV/kr.xml.gz
+
+# ── Airy (AiryTV) — ~60 channels ─────────────────────────────
+# EPG is the M3U's `x-tvg-url=` header. The engine's importer
+# reads both `url-tvg=` and `x-tvg-url=`; either is fine.
+docker compose exec tf-engine python -m engine seed \
+  --m3u https://raw.githubusercontent.com/BuddyChewChew/airy-playlist-generator/main/airy_channels.m3u \
+  --label "Airy"
+
+# ── TCL (TCL TV Plus) — ~200 channels ────────────────────────
+# EPG is the M3U's `x-tvg-url=` header (tcl_epg.xml in the
+# same repo).
+docker compose exec tf-engine python -m engine seed \
+  --m3u https://raw.githubusercontent.com/BuddyChewChew/tcl-playlist-generator/main/tcl.m3u8 \
+  --label "TCL"
+
+# ── DistroTV US (remote M3U with EPG) — ~150 channels ────────
+# BuddyChewChew's DistroTV generator hits the upstream API
+# directly and includes an EPG that the container does not.
+# Pair this with the container's import (which has a more
+# stable playlist shape) for both regions + EPG.
+docker compose exec tf-engine python -m engine seed \
+  --m3u https://raw.githubusercontent.com/BuddyChewChew/distro-playlist-generator/main/playlists/distrotv_US.m3u \
+  --label "DistroTV US (remote)"
+docker compose exec tf-engine python -m engine epg-import \
+  --url https://raw.githubusercontent.com/BuddyChewChew/distro-playlist-generator/main/playlists/distrotv.xml
+
+# ── DistroTV CA (remote M3U, same EPG) — ~30 channels ────────
+docker compose exec tf-engine python -m engine seed \
+  --m3u https://raw.githubusercontent.com/BuddyChewChew/distro-playlist-generator/main/playlists/distrotv_CA.m3u \
+  --label "DistroTV CA (remote)"
 ```
 
 **About `apsattv.com/localnow.m3u`:** This is a maintained M3U
@@ -182,6 +249,16 @@ GitHub but it's been stable for years. If the URL ever 404s, the
 Local Now channels silently drop on the next import — restart
 with the comment-out line below to remove the source entirely.
 
+**About overlapping sources (Tubi, Pluto, Plex):** All four are
+FAST services, and the same show sometimes appears on two
+services under different names. The engine's
+`canonical_channel_name()` consolidator handles name-level
+deduplication, but not "same show on different services with
+different metadata" — so you'll see some near-duplicate entries
+in the grid. The `availability_pct` in the grid sorts higher-
+quality sources to the top, so users tend to pick the more
+reliable stream naturally.
+
 **Tradeoffs of the remote-M3U approach:**
 - **Pro:** zero extra container, zero extra port, zero extra CPU.
 - **Pro:** the upstream generator refreshes the playlist on a
@@ -189,7 +266,7 @@ with the comment-out line below to remove the source entirely.
 - **Con:** if the upstream repo disappears, your channels vanish.
   **Pin a fork** if you want durability: fork the repo to your
   own GitHub, point the URLs at your fork.
-- **Con:** some M3Us (Pluto, Plex) contain signed CloudFront
+- **Con:** some M3Us (Pluto, Plex, Tubi) contain signed CloudFront
   URLs that may expire. The generators refresh daily; the
   channels will start failing within ~24h of a missing refresh.
 
@@ -198,10 +275,10 @@ solution is to host your own generator. The
 `BuddyChewChew/xumo-playlist-generator` repo is a small Python
 script; wrapping it in a ~30-line Dockerfile is a 30-minute job.
 For Pluto and Plex, the upstream is more complex (it talks to
-Pluto's stitcher APIs and Plex's EPG provider), so a self-host is
-a real project rather than a 30-minute job. Treat all six remote
-sources as "best effort" alongside the more reliable Samsung +
-DistroTV container pair.
+Pluto's stitcher APIs and Plex's EPG provider), so a self-host
+is a real project rather than a 30-minute job. Treat all twelve
+remote sources as "best effort" alongside the more reliable
+Samsung + DistroTV container pair.
 
 ## 4. Auto-refresh
 
@@ -241,8 +318,8 @@ VPS:
 | AIOstreams (already running) | 1.0 | 1.0 GB |
 | **Total worst-case** | **1.85** | **2.38 GB** |
 
-The six remote M3Us add nothing — the engine's `seed` downloads
-the M3U the same way it downloads any HTTP URL.
+The twelve remote M3Us add nothing — the engine's `seed`
+downloads the M3U the same way it downloads any HTTP URL.
 
 ## 6. Tearing it back down
 
@@ -257,7 +334,9 @@ docker compose exec tf-engine sqlite3 /app/data/treefrog.db \
   "DELETE FROM streams WHERE source_label IN
      ('Samsung TV Plus', 'DistroTV',
       'Pluto US', 'Pluto CA', 'Local Now',
-      'Plex US', 'Plex CA', 'Xumo');"
+      'Plex US', 'Plex CA', 'Xumo', 'Tubi',
+      'Samsung TV Plus KR', 'Airy', 'TCL',
+      'DistroTV US (remote)', 'DistroTV CA (remote)');"
 docker compose exec tf-engine python -m engine publish
 ```
 
