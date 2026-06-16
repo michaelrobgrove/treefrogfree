@@ -7,6 +7,10 @@
 
 name = "treefrogplus"
 
+# Pages reads the static assets from the current directory
+# (the same one we run `wrangler pages deploy .` against).
+pages_build_output_dir = "."
+
 # KV namespace for account + session storage. The `id` is the
 # production namespace; `wrangler pages dev` auto-creates and
 # binds the *_preview namespace.
