@@ -119,6 +119,32 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Report what would be deleted without touching the DB",
     )
 
+    consolidate = sub.add_parser(
+        "consolidate-channels",
+        help=(
+            "Merge channels whose canonical names collide (PBS Kids "
+            "regions -> PBS Kids; Nick + Nickelodeon Pluto TV -> "
+            "Nickelodeon; etc.). The losers' streams become backup "
+            "failover URLs on the winner row. ALWAYS run with "
+            "--dry-run first to preview the plan."
+        ),
+    )
+    consolidate.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report the merge plan without writing to the DB",
+    )
+    consolidate.add_argument(
+        "--publish",
+        action="store_true",
+        help=(
+            "After merging, republish the catalog + KV stream lists "
+            "so the public site reflects the new layout without "
+            "waiting for the next scheduler tick. Off by default; "
+            "run separately if you want to verify before publishing."
+        ),
+    )
+
     return p
 
 
@@ -342,6 +368,60 @@ async def _cmd_prune(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _cmd_consolidate_channels(args: argparse.Namespace) -> int:
+    """Merge channels whose canonical names collide.
+
+    ALWAYS run with `--dry-run` first to preview the plan. The
+    operation is destructive: loser rows are deleted and their
+    streams are re-parented onto the winner. The losers' streams
+    become backup failover URLs in the player's `streams:<token>`
+    payload, so playback keeps working (and is in fact more
+    resilient — a 1080p version of a feed and a 720p version now
+    share one channel with both as failover candidates).
+
+    News is intentionally NOT consolidated by call sign (e.g.
+    "ABC 13 Houston" stays distinct from "ABC 13 NYC"); only
+    brand-level overlaps (PBS Kids regions, Nick family, etc.)
+    are merged. The rules live in consolidator._MULTI_REGION_
+    OVERRIDE — extend that map to add more.
+    """
+    from .consolidate_channels import consolidate_duplicate_channels
+
+    db = await open_db()
+    try:
+        if args.dry_run:
+            summary = await consolidate_duplicate_channels(db, dry_run=True)
+        else:
+            async with db.execute("BEGIN IMMEDIATE"):
+                summary = await consolidate_duplicate_channels(
+                    db, dry_run=False
+                )
+                await db.commit()
+    finally:
+        await db.close()
+
+    print(json.dumps(summary, indent=2))
+
+    if not args.dry_run and summary["rows_to_delete"] > 0 and args.publish:
+        try:
+            await write_playlist()
+            await write_catalog()
+            await publish_redirects(force=True)
+            await publish_stream_lists(force=True)
+            await publish_public_assets(force=True)
+            log.info(
+                "consolidate: republished after merging %d group(s) "
+                "(%d rows deleted, %d streams re-parented, %d redirects moved)",
+                summary["merge_groups"],
+                summary["rows_to_delete"],
+                summary["streams_relinked"],
+                summary["redirects_relinked"],
+            )
+        except Exception:
+            log.exception("consolidate: post-merge republish failed; continuing")
+    return 0
+
+
 async def _cmd_stats(args: argparse.Namespace) -> int:
     db = await open_db()
     try:
@@ -382,6 +462,7 @@ _HANDLERS = {
     "epg-import": _cmd_epg_import,
     "reset-uptime": _cmd_reset_uptime,
     "prune": _cmd_prune,
+    "consolidate-channels": _cmd_consolidate_channels,
     "stats": _cmd_stats,
 }
 

@@ -21,6 +21,13 @@ from typing import Iterable
 #     like "+" or "/") so they can match without a separate boundary check.
 _WORD_SUFFIXES: tuple[str, ...] = (
     "hd", "fhd", "uhd", "sd", "4k", "8k",
+    # Resolution tags — "(1080p)", " 720p", " 4K" are quality
+    # suffixes, not part of the channel identity. Free M3U
+    # sources ship the same feed in 720p and 1080p as separate
+    # rows; without stripping these they never merge. The
+    # strings "1080p" / "720p" don't appear in real channel
+    # names so false matches are essentially zero.
+    "1080p", "720p", "480p", "2160p", "360p", "144p",
     "east", "west", "north", "south", "central", "pacific", "mountain",
     "247",
     "usa", "us", "uk", "ca",
@@ -437,11 +444,46 @@ def canonical_category(group_title: str) -> str:
 # The map is normalized -> canonical normalized form. After lookup,
 # the importer uses the canonical form to look up an existing
 # channels row, so all region variants collide on the same id.
+# Operator-maintained map of "name variant" → "canonical brand".
+# When the importer sees a name that normalizes to a key in this
+# map, it collapses to the target so all variants of the same
+# brand end up as one channels row with multiple stream URLs
+# (failover). The two main use cases:
+#
+#   - Regional variants of the same network: "PBS Kids Alaska",
+#     "PBS Kids Pacific", "PBS Kids [DRM]" → "pbs kids".
+#   - Brand aliases: "Nick Pluto TV" and "Nickelodeon Pluto TV"
+#     are the same feed from different sources, with different
+#     tvg-ids. The tvg-id-first lookup in the importer can't see
+#     they're the same channel; this map teaches the deduper to
+#     collapse them anyway.
+#
+# IMPORTANT: keep these conservative. News is the canary — "ABC 13
+# Houston" and "ABC 13 NYC" are NOT the same channel, even though
+# they share a call sign. We do NOT consolidate by call sign. The
+# rules below only merge names that already share an obvious brand
+# prefix (PBS Kids, Nick, etc.).
 _MULTI_REGION_OVERRIDE: dict[str, str] = {
-    "pbs kids alaska": "pbs kids",
-    "pbs kids east":   "pbs kids",
-    "pbs kids west":   "pbs kids",
-    "pbs kids hawaii": "pbs kids",
+    # ── PBS Kids: region/feed variants all collapse to "pbs kids" ──
+    "pbs kids alaska":          "pbs kids",
+    "pbs kids eastern central": "pbs kids",
+    "pbs kids east":            "pbs kids",
+    "pbs kids west":            "pbs kids",
+    "pbs kids hawaii":          "pbs kids",
+    "pbs kids mountain":        "pbs kids",
+    "pbs kids pacific":         "pbs kids",
+    "pbs kids drm":             "pbs kids",  # Samsung TV Plus ships a DRM-flagged copy
+    # ── Nick / Nickelodeon brand ──
+    "nick pluto tv":            "nickelodeon",
+    "nickelodeon pluto tv":     "nickelodeon",
+    "nick jr pluto tv":         "nick jr",
+    # ── Nick sub-brands ──
+    "nickelodeon toons":        "nicktoons",  # Pluto's "Nickelodeon Toons" feed = NickToons
+    "teen nick":                "teennick",
+    "teennick not 247":         "teennick",  # "TeenNick [Not 24/7]" after suffix strip
+    # ── Spanish-language Nick ──
+    "nick en espanol":          "nickelodeon en espanol",
+    "nickelodeon en espanol":   "nickelodeon en espanol",
     # Add more here as the operator notices regional splits.
 }
 
