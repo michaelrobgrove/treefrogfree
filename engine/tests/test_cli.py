@@ -58,6 +58,8 @@ def test_subcommands_known():
         (["epg-import", "--url", "https://example.com/x.xml"], "epg-import"),
         (["reset-uptime"], "reset-uptime"),
         (["reset-uptime", "--hours", "24", "--no-recompute"], "reset-uptime"),
+        (["prune"], "prune"),
+        (["prune", "--dry-run"], "prune"),
         (["stats"], "stats"),
     ]
     for argv, expected in cases:
@@ -409,6 +411,233 @@ async def test_reset_uptime_no_recompute_skips_republish(monkeypatch, tmp_path):
     )
     assert rc == 0
     assert not write_catalog_called, "no-recompute must skip write_catalog"
+
+
+@pytest.mark.asyncio
+async def test_cmd_prune_dry_run_reports_no_changes(monkeypatch):
+    """`python -m engine prune --dry-run` calls prune_dead_playlists
+    with dry_run=True and does NOT republish. The republish is the
+    side-effect we want to gate on a real prune.
+
+    We stub the pruner entirely so the test exercises the CLI
+    plumbing (dispatch, dry_run flag, conditional republish) without
+    needing a real DB with source_label rows.
+    """
+    from engine import __main__ as cli
+
+    captured = {"dry_run": None, "called": 0}
+
+    async def _fake_prune(db, *, dry_run=False):
+        captured["called"] += 1
+        captured["dry_run"] = dry_run
+        return {
+            "dry_run": dry_run,
+            "scanned_labels": 3,
+            "dead_labels": 0,
+            "pruned": [],
+        }
+
+    monkeypatch.setattr(cli, "prune_dead_playlists", _fake_prune)
+
+    class _FakeDB:
+        """Stand-in for an aiosqlite connection. Has an async close()
+        so the handler's `await db.close()` in the finally block
+        doesn't blow up."""
+        async def close(self):
+            pass
+    async def _fake_open():
+        return _FakeDB()
+    monkeypatch.setattr(cli, "open_db", _fake_open)
+
+    calls = {"publish_public": 0, "publish_redirects": 0, "playlist": 0, "catalog": 0}
+
+    async def _spy(*_a, **_kw):
+        calls["publish_public"] += 1
+    async def _spy2(*_a, **_kw):
+        calls["publish_redirects"] += 1
+    async def _spy3():
+        calls["playlist"] += 1
+    async def _spy4():
+        calls["catalog"] += 1
+
+    monkeypatch.setattr(cli, "write_playlist", _spy3)
+    monkeypatch.setattr(cli, "write_catalog", _spy4)
+    monkeypatch.setattr(cli, "publish_public_assets", _spy)
+    monkeypatch.setattr(cli, "publish_redirects", _spy2)
+
+    # dry_run with no deletions → no republish.
+    rc = await cli._cmd_prune(
+        cli._build_parser().parse_args(["prune", "--dry-run"])
+    )
+    assert rc == 0
+    assert captured["called"] == 1
+    assert captured["dry_run"] is True
+    assert calls == {"publish_public": 0, "publish_redirects": 0, "playlist": 0, "catalog": 0}, (
+        f"dry-run prune must not republish; got {calls}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cmd_prune_republishes_on_real_deletion(monkeypatch):
+    """When the pruner actually deletes something, _cmd_prune must
+    republish the catalog + KV so the public site sees the cleanup
+    immediately rather than waiting for the next tick."""
+    from engine import __main__ as cli
+
+    async def _fake_prune(db, *, dry_run=False):
+        return {
+            "dry_run": False,
+            "scanned_labels": 5,
+            "dead_labels": 2,
+            "pruned": [
+                {"source_label": "a", "streams_deleted": 3, "channels_deleted": 2},
+                {"source_label": "b", "streams_deleted": 1, "channels_deleted": 0},
+            ],
+        }
+
+    monkeypatch.setattr(cli, "prune_dead_playlists", _fake_prune)
+
+    class _FakeDB:
+        """Stand-in for an aiosqlite connection. Has an async close()
+        so the handler's `await db.close()` in the finally block
+        doesn't blow up."""
+        async def close(self):
+            pass
+    async def _fake_open():
+        return _FakeDB()
+    monkeypatch.setattr(cli, "open_db", _fake_open)
+
+    calls = {"publish_public": 0, "publish_redirects": 0, "playlist": 0, "catalog": 0}
+
+    async def _spy(*_a, **_kw):
+        calls["publish_public"] += 1
+    async def _spy2(*_a, **_kw):
+        calls["publish_redirects"] += 1
+    async def _spy3():
+        calls["playlist"] += 1
+    async def _spy4():
+        calls["catalog"] += 1
+
+    monkeypatch.setattr(cli, "write_playlist", _spy3)
+    monkeypatch.setattr(cli, "write_catalog", _spy4)
+    monkeypatch.setattr(cli, "publish_public_assets", _spy)
+    monkeypatch.setattr(cli, "publish_redirects", _spy2)
+
+    rc = await cli._cmd_prune(cli._build_parser().parse_args(["prune"]))
+    assert rc == 0
+    assert calls == {"publish_public": 1, "publish_redirects": 1, "playlist": 1, "catalog": 1}, (
+        f"real prune must republish all four; got {calls}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_admin_prune_calls_pruner(monkeypatch):
+    """POST /api/admin/prune[?dry_run=1] must call the pruner with
+    the right dry_run flag, and the dry_run variant must NOT trigger
+    a republish. Uses a mocked request + the same aiohttp pattern as
+    the other admin tests."""
+    from aiohttp.test_utils import make_mocked_request
+    from engine.admin import server
+
+    captured = {"dry_run": None, "called": 0}
+
+    async def _fake_prune(db, *, dry_run=False):
+        captured["called"] += 1
+        captured["dry_run"] = dry_run
+        return {
+            "dry_run": dry_run,
+            "scanned_labels": 0,
+            "dead_labels": 0,
+            "pruned": [],
+        }
+
+    monkeypatch.setattr(server, "prune_dead_playlists", _fake_prune)
+
+    class _FakeDB:
+        async def close(self):
+            pass
+    async def _fake_open():
+        return _FakeDB()
+    monkeypatch.setattr(server, "open_db", _fake_open)
+
+    republish_calls = {"playlist": 0, "catalog": 0, "redirects": 0, "public": 0}
+    async def _spy_playlist():
+        republish_calls["playlist"] += 1
+    async def _spy_catalog():
+        republish_calls["catalog"] += 1
+    async def _spy_redirects(*_a, **_kw):
+        republish_calls["redirects"] += 1
+    async def _spy_public(*_a, **_kw):
+        republish_calls["public"] += 1
+    monkeypatch.setattr(server, "write_playlist", _spy_playlist)
+    monkeypatch.setattr(server, "write_catalog", _spy_catalog)
+    monkeypatch.setattr(server, "publish_redirects", _spy_redirects)
+    monkeypatch.setattr(server, "publish_public_assets", _spy_public)
+
+    # 1. dry_run=1 → no republish
+    req = make_mocked_request("POST", "/api/admin/prune?dry_run=1")
+    resp = await server.handle_admin_prune(req)
+    assert resp.status == 200
+    assert captured["called"] == 1
+    assert captured["dry_run"] is True
+    assert republish_calls == {"playlist": 0, "catalog": 0, "redirects": 0, "public": 0}
+
+    # 2. no query param → dry_run=False; pruner returned dead_labels=0
+    #    so the republish branch is skipped (handler only republishes
+    #    if anything was actually deleted).
+    captured["called"] = 0
+    req = make_mocked_request("POST", "/api/admin/prune")
+    resp = await server.handle_admin_prune(req)
+    assert resp.status == 200
+    assert captured["called"] == 1
+    assert captured["dry_run"] is False
+    assert republish_calls == {"playlist": 0, "catalog": 0, "redirects": 0, "public": 0}
+
+
+@pytest.mark.asyncio
+async def test_admin_prune_republishes_on_real_deletion(monkeypatch):
+    """When the pruner actually deletes something (dead_labels > 0),
+    the handler must republish the catalog + KV so the public site
+    sees the cleanup immediately."""
+    from aiohttp.test_utils import make_mocked_request
+    from engine.admin import server
+
+    async def _fake_prune(db, *, dry_run=False):
+        return {
+            "dry_run": False,
+            "scanned_labels": 5,
+            "dead_labels": 1,
+            "pruned": [{"source_label": "dead-m3u", "streams_deleted": 3, "channels_deleted": 2}],
+        }
+
+    monkeypatch.setattr(server, "prune_dead_playlists", _fake_prune)
+
+    class _FakeDB:
+        async def close(self):
+            pass
+    async def _fake_open():
+        return _FakeDB()
+    monkeypatch.setattr(server, "open_db", _fake_open)
+
+    republish_calls = {"playlist": 0, "catalog": 0, "redirects": 0, "public": 0}
+    async def _spy_playlist():
+        republish_calls["playlist"] += 1
+    async def _spy_catalog():
+        republish_calls["catalog"] += 1
+    async def _spy_redirects(*_a, **_kw):
+        republish_calls["redirects"] += 1
+    async def _spy_public(*_a, **_kw):
+        republish_calls["public"] += 1
+    monkeypatch.setattr(server, "write_playlist", _spy_playlist)
+    monkeypatch.setattr(server, "write_catalog", _spy_catalog)
+    monkeypatch.setattr(server, "publish_redirects", _spy_redirects)
+    monkeypatch.setattr(server, "publish_public_assets", _spy_public)
+
+    req = make_mocked_request("POST", "/api/admin/prune")
+    resp = await server.handle_admin_prune(req)
+    assert resp.status == 200
+    # Real deletion → all four republish steps fired.
+    assert republish_calls == {"playlist": 1, "catalog": 1, "redirects": 1, "public": 1}
 
 
 def _seed_minimal_db(path: Path) -> None:

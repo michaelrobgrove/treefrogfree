@@ -22,6 +22,7 @@ from aiohttp import web
 from .config import CONFIG
 from .db import open_db, run_migrations
 from .health import run_health_cycle
+from .pruner import prune_dead_playlists
 from .publisher.json_catalog import write_catalog
 from .publisher.kv import publish_public_assets, publish_redirects
 from .publisher.playlist import write_playlist
@@ -44,6 +45,28 @@ async def _tick() -> None:
         )
     except Exception:
         log.exception("Health cycle failed; continuing")
+        summary = None  # downstream steps may want to skip if health failed
+
+    # Drop any source_label whose streams are all offline. Runs AFTER
+    # check-once (so we have fresh health data) and BEFORE the catalog
+    # republish (so the cleaned-up channel set lands in the public
+    # KV in the same tick). On a typical run this is a no-op; it only
+    # deletes when a remote M3U has gone fully dead (e.g. a provider
+    # geo-blocked the VPS IP, or the generator shipped malformed URLs).
+    try:
+        db = await open_db()
+        try:
+            prune_summary = await prune_dead_playlists(db)
+        finally:
+            await db.close()
+        if prune_summary["dead_labels"] > 0:
+            log.info(
+                "Pruner dropped %d dead label(s): %s",
+                prune_summary["dead_labels"],
+                ", ".join(p["source_label"] for p in prune_summary["pruned"]),
+            )
+    except Exception:
+        log.exception("Pruner failed; continuing")
 
     try:
         await write_playlist()

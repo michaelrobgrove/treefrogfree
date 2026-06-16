@@ -15,6 +15,7 @@ Two surface areas on one port:
     POST /api/admin/check-once       → run a single health cycle
     POST /api/admin/publish          → re-render playlist + catalog
     POST /api/admin/rebuild-kv       → force-republish all KV
+    POST /api/admin/prune[?dry_run=1] → drop dead playlists
     POST /api/admin/streams/{id}/recheck
     POST /api/admin/streams/{id}/disable
     POST /api/admin/streams/{id}/enable
@@ -45,6 +46,7 @@ from ..config import CONFIG
 from ..db import open_db, run_migrations
 from ..health import run_health_cycle
 from ..importers.importer import import_m3u
+from ..pruner import prune_dead_playlists
 from ..publisher.json_catalog import build_catalog, write_catalog
 from ..publisher.kv import publish_public_assets, publish_redirects
 from ..publisher.playlist import render_playlist, write_playlist
@@ -142,6 +144,7 @@ async def handle_root(_request: web.Request) -> web.Response:
                     "POST /api/admin/check-once",
                     "POST /api/admin/publish",
                     "POST /api/admin/rebuild-kv",
+                    "POST /api/admin/prune[?dry_run=1]",
                 ],
             },
         }
@@ -357,6 +360,36 @@ async def handle_admin_rebuild_kv(_request: web.Request) -> web.Response:
     })
 
 
+async def handle_admin_prune(request: web.Request) -> web.Response:
+    """Drop any source_label whose streams are all offline.
+
+    Query params:
+      dry_run=1  → report the kill list without writing.
+
+    The scheduler also runs this at the end of every tick; this
+    endpoint is for an operator-driven sweep (e.g. after a
+    bulk import goes sideways and the operator wants to clean
+    up without waiting 30 minutes for the next tick).
+    """
+    dry_run = request.query.get("dry_run") in ("1", "true", "yes")
+    db = await open_db()
+    try:
+        summary = await prune_dead_playlists(db, dry_run=dry_run)
+    finally:
+        await db.close()
+    # If anything was actually deleted, republish the public catalog
+    # + KV so the change is visible immediately.
+    if not dry_run and summary["dead_labels"] > 0:
+        try:
+            await write_playlist()
+            await write_catalog()
+            await publish_redirects(force=True)
+            await publish_public_assets(force=True)
+        except Exception as e:
+            log.warning("prune: post-prune republish failed: %s", e)
+    return web.json_response(summary)
+
+
 async def handle_stream_recheck(request: web.Request) -> web.Response:
     stream_id = int(request.match_info["id"])
     db = await open_db()
@@ -482,6 +515,7 @@ def build_app() -> web.Application:
     app.router.add_post("/api/admin/check-once", handle_admin_check_once)
     app.router.add_post("/api/admin/publish", handle_admin_publish)
     app.router.add_post("/api/admin/rebuild-kv", handle_admin_rebuild_kv)
+    app.router.add_post("/api/admin/prune", handle_admin_prune)
     app.router.add_post("/api/admin/streams/{id}/recheck", handle_stream_recheck)
     app.router.add_post("/api/admin/streams/{id}/disable", handle_stream_disable)
     app.router.add_post("/api/admin/streams/{id}/enable", handle_stream_enable)

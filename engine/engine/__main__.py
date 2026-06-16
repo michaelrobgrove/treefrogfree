@@ -7,6 +7,7 @@ Usage:
     python -m engine publish            # re-render playlist + catalog only
     python -m engine migrate            # apply DB migrations and exit
     python -m engine epg-import --url <xmltv-url>  # one-shot XMLTV import
+    python -m engine prune [--dry-run]  # drop dead playlists (0 online streams)
     python -m engine reset-uptime       # clear stale availability_pct values
     python -m engine stats              # print summary stats
 """
@@ -24,6 +25,7 @@ from .config import CONFIG
 from .db import open_db, run_migrations
 from .health import run_health_cycle
 from .importers.importer import import_m3u
+from .pruner import prune_dead_playlists
 from .publisher.json_catalog import write_catalog
 from .publisher.kv import publish_public_assets, publish_redirects
 from .publisher.playlist import write_playlist
@@ -88,6 +90,22 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-recompute",
         action="store_true",
         help="Skip the post-reset availability_pct recompute (let the next health cycle do it)",
+    )
+
+    prune = sub.add_parser(
+        "prune",
+        help=(
+            "Drop any source_label whose streams are ALL offline, plus "
+            "the channels that would become orphaned. Idempotent and "
+            "safe to run any time. The scheduler also runs this at the "
+            "end of every health cycle; the subcommand is for an "
+            "operator-driven sweep without waiting for the next tick."
+        ),
+    )
+    prune.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report what would be deleted without touching the DB",
     )
 
     return p
@@ -270,6 +288,42 @@ async def _cmd_reset_uptime(args: argparse.Namespace) -> int:
     return 0
 
 
+async def _cmd_prune(args: argparse.Namespace) -> int:
+    """Drop dead playlists (source_labels with 0 online streams) and
+    any channels that lose their last stream as a result.
+
+    Idempotent: the second call is a no-op. Safe to run any time.
+    With `--dry-run`, returns the kill list without mutating the DB.
+    The scheduler calls the same function at the end of every tick;
+    this CLI is for an on-demand operator sweep.
+    """
+    db = await open_db()
+    try:
+        summary = await prune_dead_playlists(db, dry_run=args.dry_run)
+    finally:
+        await db.close()
+    print(json.dumps(summary, indent=2))
+    # If we actually deleted anything, republish the public catalog +
+    # KV so the changes are visible immediately rather than waiting
+    # for the next 30m tick. (In dry-run mode we skip the republish
+    # because nothing changed.)
+    if not summary["dry_run"] and summary["dead_labels"] > 0:
+        try:
+            await write_playlist()
+            await write_catalog()
+            await publish_redirects(force=True)
+            await publish_public_assets(force=True)
+            log.info(
+                "prune: republished after dropping %d label(s) (%d total streams, %d orphan channels)",
+                summary["dead_labels"],
+                sum(p["streams_deleted"] for p in summary["pruned"]),
+                sum(p["channels_deleted"] for p in summary["pruned"]),
+            )
+        except Exception:
+            log.exception("prune: post-prune republish failed; continuing")
+    return 0
+
+
 async def _cmd_stats(args: argparse.Namespace) -> int:
     db = await open_db()
     try:
@@ -309,6 +363,7 @@ _HANDLERS = {
     "migrate": _cmd_migrate,
     "epg-import": _cmd_epg_import,
     "reset-uptime": _cmd_reset_uptime,
+    "prune": _cmd_prune,
     "stats": _cmd_stats,
 }
 
