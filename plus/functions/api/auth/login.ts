@@ -22,10 +22,10 @@
  *  password_auth hash.
  *
  *  Staleness check: if the customer hasn't signed in for
- *  30+ days (or has never signed in), we call Gold Panel
- *  to refresh `expires_at` before minting the session. This
- *  keeps the dashboard accurate without an API call on
- *  every sign-in.
+ *  30+ days (or has never signed in), we deny access with
+ *  a 401 error. The session cookie is cleared. This ensures
+ *  inactive accounts are locked out and require operator
+ *  intervention to reactivate.
  *
  *  Password-change handling: customers cannot change their
  *  Gold Panel password themselves (only the operator can).
@@ -36,6 +36,7 @@
 
 import { getAccountByPanelUsername, putAccount, type Account, type ContactHandles } from "../../_lib/kv";
 import { getDeviceInfo } from "../../_lib/goldpanel";
+import { clearSessionCookie } from "../../_lib/session";
 
 interface PagesContext {
     request: Request;
@@ -49,10 +50,9 @@ interface LoginBody {
 
 const STALENESS_MS = 30 * 24 * 60 * 60 * 1000;  // 30 days
 
-/** Returns true if the account's expiry is "stale enough" to
- *  warrant a Gold Panel refresh on sign-in. We refresh when
- *  the customer has never logged in before, or when their
- *  last login was more than 30 days ago. */
+/** Returns true if the account's last_login_at is older than 30 days
+ *  or if the account has never signed in. This is used to deny
+ *  access for stale accounts. */
 function isStale(acct: Account | null): boolean {
     if (!acct) return true;
     if (!acct.last_login_at) return true;
@@ -82,6 +82,19 @@ async function refreshExpiresAt(
     }
 }
 
+/** Build a 401 response for stale account with cleared session cookie. */
+function staleResponse(requestUrl: string): Response {
+    return new Response(JSON.stringify({
+        error: "Account inactive. Please contact support to reactivate your account.",
+    }), {
+        status: 401,
+        headers: {
+            "Content-Type": "application/json",
+            "Set-Cookie": clearSessionCookie(requestUrl),
+        },
+    });
+}
+
 export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
     if (ctx.request.method !== "POST") {
         return json({ error: "Method not allowed" }, 405);
@@ -106,14 +119,15 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
     if (acct && acct.password_auth) {
         const ok = await verifyPassword(password, acct.password_auth);
         if (ok) {
-            // 30-day staleness: if the customer hasn't
-            // signed in for a while, refresh expires_at
-            // from the panel before signing them in. The
-            // staleness refresh is best-effort and
-            // never blocks the sign-in.
+            // 30-day staleness check: deny access if the
+            // account hasn't been used for 30+ days.
             if (isStale(acct)) {
-                await refreshExpiresAt(kv, acct, username, password);
+                return staleResponse(ctx.request.url);
             }
+            // Refresh expires_at from the panel as a best-effort
+            // operation. This keeps the dashboard accurate without
+            // an API call on every sign-in.
+            await refreshExpiresAt(kv, acct, username, password);
             acct.last_login_at = new Date().toISOString();
             await putAccount(kv, acct);
             const { cookie } = await createSession(kv, acct.paypal_order_id, ctx.request.url);
@@ -148,6 +162,11 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
     const newCt = await encryptSecret(ctx.env, password);
 
     if (acct) {
+        // 30-day staleness check: deny access if the
+        // account hasn't been used for 30+ days.
+        if (isStale(acct)) {
+            return staleResponse(ctx.request.url);
+        }
         // Refresh the local hash, the encrypted panel
         // password, and the panel_user_id (in case the
         // operator reset the password in Gold Panel).
