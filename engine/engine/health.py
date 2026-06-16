@@ -8,15 +8,31 @@ Stage 2: GET the first 16 KB and verify the body looks like an M3U
          where the server returns 200 to GET but the playlist is empty,
          auth-failed, or HTML (a login wall).
 
+Stage 3 (browser probe): if stages 1+2 succeed with VLC's UA, do a
+         parallel/second GET with a real browser UA (Chrome 120 on
+         Windows 10) and a 16KB body sniff. Streams that 2xx to VLC
+         but 4xx/5xx to browsers — typically a CloudFront function
+         routing on UA — get `streams.browser_ok = 0`. The web
+         player's stream-list publisher (publish_stream_lists) then
+         filters these out so the player only ever sees URLs we
+         believe a browser can play. The public M3U playlist and the
+         /s/<token> 302s stay unchanged — VLC/TiviMate users still
+         see the full set of "online" streams.
+
 We deliberately do NOT require an #EXTINF entry: a master playlist with
 only #EXT-X-STREAM-INF (DASH/HLS variant) is valid, and some providers
 ship a one-line placeholder that gets replaced on first play. The
 "is this an M3U at all?" sniff is the right floor.
 
-User-Agent: VLC's exact string. A surprising number of IPTV origins
-geo-gate or 403 anything that isn't a known player UA (Kodi, VLC, TiviMate,
-etc.). VLC was chosen because it's the most permissive of the bunch and
-the user has confirmed they watch from VLC.
+User-Agent (primary): VLC's exact string. A surprising number of IPTV
+origins geo-gate or 403 anything that isn't a known player UA (Kodi,
+VLC, TiviMate, etc.). VLC was chosen because it's the most permissive
+of the bunch and the user has confirmed they watch from VLC.
+
+User-Agent (browser probe): a real Chrome 120 / Win10 string. This
+is the *secondary* probe — the M3U playlist and the redirect
+hot-path stay VLC-based. The browser probe is purely advisory and
+feeds the web player stream list.
 
 See plan.md §6 for the rationale.
 """
@@ -41,12 +57,34 @@ log = logging.getLogger("treefrog.health")
 # is stable enough for IPTV origin servers that key off the prefix.
 VLC_UA = "VLC/3.0.21 LibVLC/3.0.21"
 
+# A realistic Chrome on Windows 10 UA. Used only for the secondary
+# browser-UA probe that populates `streams.browser_ok`. Updated
+# periodically; we just need *some* common browser string — exact
+# version drift doesn't matter.
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/120.0.0.0 Safari/537.36"
+)
+
 # Some origins block on the missing Icy-Metadata header that real
 # players send for audio streams; we add it cheaply.
 _EXTRA_HEADERS = {
     "User-Agent": VLC_UA,
     "Accept": "*/*",
     "Icy-MetaData": "1",
+    "Connection": "close",
+}
+
+# Browser-shaped headers for the secondary probe. A few CDNs key off
+# `Accept` / `Accept-Language` (e.g. Plex's CloudFront function
+# refuses a bare `Mozilla/5.0` but accepts the full Chrome header
+# set). We send the minimum that real Chrome sends so we don't get
+# false negatives.
+_BROWSER_EXTRA_HEADERS = {
+    "User-Agent": BROWSER_UA,
+    "Accept": "application/vnd.apple.mpegurl,application/x-mpegURL,*/*",
+    "Accept-Language": "en-US,en;q=0.9",
     "Connection": "close",
 }
 
@@ -68,6 +106,11 @@ class ProbeResult:
     ok: bool
     latency_ms: int
     error: Optional[str] = None
+    # True iff the secondary browser-UA probe confirmed the source
+    # serves an M3U to a real browser. None = not probed, False =
+    # probed but incompatible. The caller persists this into
+    # `streams.browser_ok`.
+    browser_ok: Optional[bool] = None
 
 
 async def _check_one(
@@ -140,8 +183,15 @@ async def _check_one(
         # because some providers ship master playlists with only
         # #EXT-X-STREAM-INF, and a few ship one-line placeholders that
         # get replaced on first segment fetch.
+        latency_ms = int((time.monotonic() - started) * 1000)
+        # Run the secondary browser-UA probe. A failure here does NOT
+        # change `ok` (the VLC-based probe is the source of truth for
+        # status / health_logs / M3U playlist); it only fills in
+        # `browser_ok` so publish_stream_lists can hide sources the
+        # browser player can't render.
+        browser_ok = await _probe_browser_ok(session, url, timeout)
         return ProbeResult(
-            stream_id, True, int((time.monotonic() - started) * 1000), None
+            stream_id, True, latency_ms, None, browser_ok=browser_ok
         )
     except asyncio.TimeoutError:
         return ProbeResult(
@@ -158,6 +208,51 @@ async def _check_one(
             stream_id, False, int((time.monotonic() - started) * 1000),
             f"{type(e).__name__}: {e!s}"[:200],
         )
+
+
+async def _probe_browser_ok(
+    session: aiohttp.ClientSession,
+    url: str,
+    timeout: aiohttp.ClientTimeout,
+) -> Optional[bool]:
+    """Run the secondary browser-UA probe against `url`.
+
+    Returns:
+        True  if a real browser would get an M3U-shaped response,
+        False if a real browser would get 4xx/5xx or a non-M3U body,
+        None if the probe itself failed (network/timeout) and we
+              couldn't tell — better to ship a stream we can't
+              confirm than to silently flip an unknown to "bad"
+              on a transient error.
+
+    Cheap: one GET, capped at 16KB and `health_timeout_sec`. The
+    primary VLC probe already verified the URL is real; this is
+    a "does the browser view of it also work?" sanity check.
+    """
+    try:
+        async with session.get(
+            url, timeout=timeout, headers=_BROWSER_EXTRA_HEADERS,
+            allow_redirects=True,
+        ) as resp:
+            if resp.status >= 400:
+                log.debug("browser-ua probe: %s → HTTP %d", url, resp.status)
+                return False
+            buf = bytearray()
+            async for chunk in resp.content.iter_chunked(4096):
+                buf.extend(chunk)
+                if len(buf) >= CONFIG.health_manifest_bytes:
+                    break
+                if b"#EXTM3U" in buf:
+                    break
+        if b"#EXTM3U" in buf:
+            return True
+        # 2xx but no M3U signature — most likely a browser-specific
+        # login wall or a UA-keyed error page. Treat as not OK.
+        log.debug("browser-ua probe: %s → 2xx but no #EXTM3U", url)
+        return False
+    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+        log.debug("browser-ua probe: %s → %s", url, e)
+        return None
 
 
 async def _check_with_sem(
@@ -231,10 +326,17 @@ async def run_health_cycle() -> dict:
                         offline_since = NULL,
                         last_checked_at = ?,
                         last_error = NULL,
-                        last_latency_ms = ?
+                        last_latency_ms = ?,
+                        browser_ok = ?
                     WHERE id = ?
                     """,
-                    (now, now, r.latency_ms, stream_id),
+                    (now, now, r.latency_ms,
+                     # NULL stays NULL (don't claim OK until proven);
+                     # True → 1, False → 0. This is the secondary
+                     # browser-UA probe result, advisory only.
+                     (1 if r.browser_ok is True else
+                      0 if r.browser_ok is False else None),
+                     stream_id),
                 )
             else:
                 offline += 1

@@ -61,6 +61,15 @@ async def publish_stream_lists(*, force: bool = False) -> dict:
             rows = await cur.fetchall()
 
         # For each channel, pull its online streams ordered by priority.
+        # The web player is a browser, so we filter to streams that have
+        # been confirmed browser-playable by the secondary browser-UA
+        # probe (`browser_ok = 1`). Streams not yet probed (NULL) are
+        # still included so fresh imports don't go dark until the next
+        # health cycle; streams confirmed 4xx/5xx to a real browser
+        # (`browser_ok = 0`) are excluded so the player never gets a
+        # URL the browser can't render. The public M3U playlist and
+        # the /s/<token> 302s are unaffected — they still serve every
+        # online stream to VLC/TiviMate.
         streams_by_channel: dict[str, list[str]] = {}
         for r in rows:
             async with db.execute(
@@ -68,6 +77,7 @@ async def publish_stream_lists(*, force: bool = False) -> dict:
                 SELECT source_url
                 FROM streams
                 WHERE channel_id = ? AND status = 'online'
+                  AND (browser_ok IS NULL OR browser_ok = 1)
                 ORDER BY priority ASC, id ASC
                 """,
                 (r["channel_id"],),

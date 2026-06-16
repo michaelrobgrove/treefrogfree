@@ -187,6 +187,7 @@ def _seed_db(path: Path) -> None:
             last_checked_at TEXT,
             last_error TEXT,
             last_latency_ms INTEGER,
+            browser_ok INTEGER,
             UNIQUE (source_url)
         );
         CREATE TABLE redirects (
@@ -379,3 +380,76 @@ async def test_diff_and_skip_on_second_call(seeded_db):
     assert second["unchanged"] == 2
     # No new PUTs on the second call.
     assert len(_KV.puts) == puts_after_first
+
+
+@pytest.mark.asyncio
+async def test_excludes_streams_with_browser_ok_zero(seeded_db):
+    """A stream that the secondary browser-UA probe confirmed is
+    NOT browser-playable (browser_ok = 0) must be excluded from
+    the web player stream list, even when status = online. This
+    is the whole point of the browser probe — sources that 200 to
+    VLC but 400 to a real browser (Plex/Xumo behind a CloudFront
+    function) should not surface in the player."""
+    # Mark one of CNN's streams as browser-incompatible.
+    import aiosqlite
+    async with aiosqlite.connect(str(seeded_db)) as db:
+        await db.execute(
+            "UPDATE streams SET browser_ok = 0 WHERE source_url = 'http://provider-a/cnn.m3u8'"
+        )
+        await db.commit()
+    async def _open_my_db():
+        c = await aiosqlite.connect(str(seeded_db))
+        c.row_factory = aiosqlite.Row
+        return c
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(
+            engine.publisher.streams_kv, "open_db", _open_my_db
+        )
+        await engine.publisher.streams_kv.publish_stream_lists()
+    finally:
+        monkeypatch.undo()
+
+    cnn = json.loads(_KV.store["streams:bbbbbb"])
+    # provider-a (browser_ok=0) is dropped; provider-c and
+    # provider-b stay.
+    assert cnn["urls"] == [
+        "http://provider-c/cnn.m3u8",
+        "http://provider-b/cnn.m3u8",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_keeps_streams_with_browser_ok_null_or_one(seeded_db):
+    """Streams with browser_ok = NULL (not yet probed) or
+    browser_ok = 1 (confirmed browser-playable) must BOTH be
+    included. NULL is the default for fresh imports and we don't
+    want to dim new channels until the next health cycle
+    confirms them."""
+    import aiosqlite
+    async with aiosqlite.connect(str(seeded_db)) as db:
+        # Mark PBS Kids' stream as confirmed OK; leave CNN's three
+        # streams as NULL.
+        await db.execute(
+            "UPDATE streams SET browser_ok = 1 WHERE channel_id = 1"
+        )
+        await db.commit()
+    async def _open_my_db():
+        c = await aiosqlite.connect(str(seeded_db))
+        c.row_factory = aiosqlite.Row
+        return c
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(
+            engine.publisher.streams_kv, "open_db", _open_my_db
+        )
+        await engine.publisher.streams_kv.publish_stream_lists()
+    finally:
+        monkeypatch.undo()
+
+    pbs = json.loads(_KV.store["streams:aaaaaa"])
+    assert pbs["urls"] == ["http://provider-a/pbs.m3u8"]
+    cnn = json.loads(_KV.store["streams:bbbbbb"])
+    # All three NULL streams survive — the filter is "NULL OR 1",
+    # not "1 only".
+    assert len(cnn["urls"]) == 3

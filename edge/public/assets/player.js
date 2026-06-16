@@ -46,6 +46,17 @@
   let currentChannel = null;
   let urls = [];
   let urlIndex = 0;
+  // Per-URL error log. We surface the last failure reason in the
+  // UI when every URL is exhausted so the user (and the operator
+  // triaging support tickets) can see *why* it didn't play — not
+  // a generic "all sources failed" black box.
+  // Each entry: { url, type, details, status, message }
+  let errorLog = [];
+  // Whether we've already requested the browser to launch an
+  // external player (VLC) on this round. The retry button on the
+  // "all failed" screen re-opens the dialog; without this flag
+  // the link would just re-attach to the same dead URL.
+  let lastAttemptedUrl = null;
 
   // ---- Public API ----
 
@@ -53,6 +64,8 @@
     currentChannel = channel;
     urls = [];
     urlIndex = 0;
+    errorLog = [];
+    lastAttemptedUrl = null;
     ensureDialog();
     dialog.showModal();
     // Lock body scroll while the modal is open. The native <dialog>
@@ -156,6 +169,19 @@
         }
         .tf-title { font-size: 1.25rem; font-weight: 700; margin: 0; }
         .tf-status { color: #9ca3af; font-size: 0.85rem; }
+        /* "All sources failed" UI: links + collapsible error list.
+           Status line stays compact; the user can expand the
+           details block for the full per-URL log. */
+        .tf-failed-links { display: inline-flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-left: 0.5rem; }
+        .tf-failed-link {
+          display: inline-block; color: #22c55e; text-decoration: underline; font-size: 0.85rem;
+          background: none; border: 0; padding: 0; cursor: pointer; font-family: inherit;
+        }
+        .tf-failed-retry { color: #fbbf24; }
+        .tf-failed-details { font-size: 0.8rem; color: #9ca3af; }
+        .tf-failed-details summary { cursor: pointer; }
+        .tf-failed-list { margin: 0.25rem 0 0 1rem; padding: 0; max-width: 30rem; }
+        .tf-failed-list li { margin: 0.15rem 0; }
         .tf-epg {
           display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-top: 1rem;
         }
@@ -218,21 +244,127 @@
 
   function tryCurrent() {
     if (urlIndex >= urls.length) {
-      // All sources exhausted.
-      const lastUrl = urls[urls.length - 1] || '';
-      setStatus('All sources failed.');
-      const a = document.createElement('a');
-      a.href = lastUrl;
-      a.target = '_blank';
-      a.rel = 'noopener';
-      a.textContent = 'Open source URL in VLC';
-      a.style.cssText = 'color:#22c55e;margin-left:.5rem;text-decoration:underline;';
-      status.appendChild(a);
+      // All sources exhausted. Show a useful summary so the user
+      // can tell *why* it failed (HTTP 400 from a CDN that only
+      // serves VLC UAs is the common one — health-check passes,
+      // browser fails). The last error's reason goes in the main
+      // status line; the full per-URL log goes in the dialog's
+      // hidden <details> so it's discoverable but not noisy.
+      showAllFailed();
       return;
     }
     const url = urls[urlIndex];
+    lastAttemptedUrl = url;
     setStatus(`Source ${urlIndex + 1} of ${urls.length}…`);
     attachSource(url);
+  }
+
+  function showAllFailed() {
+    const lastUrl = urls[urls.length - 1] || '';
+    const lastErr = errorLog[errorLog.length - 1];
+    // Headline: the most likely cause from the most recent failure.
+    const headline = explainError(lastErr);
+    setStatus(`All ${urls.length} source${urls.length === 1 ? '' : 's'} failed — ${headline}`);
+
+    // Two action links: open the last URL in an external player
+    // (VLC handles the UAs many CDNs reject) and a collapsible
+    // <details> with the full per-URL log. The <details> survives
+    // status replacements because we keep a stable parent element.
+    const links = document.createElement('div');
+    links.className = 'tf-failed-links';
+
+    const vlc = document.createElement('a');
+    vlc.href = lastUrl;
+    vlc.target = '_blank';
+    vlc.rel = 'noopener';
+    vlc.textContent = 'Open last URL in VLC';
+    vlc.className = 'tf-failed-link';
+    links.appendChild(vlc);
+
+    if (errorLog.length > 1) {
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.textContent = 'Retry';
+      retry.className = 'tf-failed-link tf-failed-retry';
+      retry.addEventListener('click', () => {
+        if (!currentChannel || !currentChannel.token) return;
+        urlIndex = 0;
+        errorLog = [];
+        fetchAndPlay(currentChannel.token).catch((e) => {
+          setStatus(`Failed to start: ${e.message}`);
+        });
+      });
+      links.appendChild(retry);
+    }
+
+    if (errorLog.length) {
+      const det = document.createElement('details');
+      det.className = 'tf-failed-details';
+      const sum = document.createElement('summary');
+      sum.textContent = `Show ${errorLog.length} error${errorLog.length === 1 ? '' : 's'}`;
+      det.appendChild(sum);
+      const list = document.createElement('ol');
+      list.className = 'tf-failed-list';
+      for (const e of errorLog) {
+        const li = document.createElement('li');
+        li.textContent = explainError(e);
+        list.appendChild(li);
+      }
+      det.appendChild(list);
+      links.appendChild(det);
+    }
+
+    status.appendChild(links);
+  }
+
+  // Turn an hls.js error record into a short, useful sentence.
+  // Examples:
+  //   "Source returned HTTP 400"        (CDN rejects browser UA)
+  //   "Source returned HTTP 403"        (geo-block / token expired)
+  //   "Source returned HTTP 404"        (stream pulled)
+  //   "Manifest fetch failed (network)" (CORS, DNS, offline)
+  //   "Codec not supported by browser"  (HEVC on Chrome/FF)
+  //   "Browser could not decode stream" (generic decode error)
+  function explainError(err) {
+    if (!err) return 'no error captured';
+    const s = err.status;
+    if (s && s >= 400) {
+      const reason = {
+        400: 'bad request — source may require a different client',
+        401: 'unauthorized — auth token may have expired',
+        403: 'forbidden — geo-blocked or token rejected',
+        404: 'not found — stream no longer exists',
+        410: 'gone — stream permanently removed',
+        429: 'rate limited',
+        500: 'source server error',
+        502: 'source CDN error',
+        503: 'source unavailable',
+      }[s];
+      return `source returned HTTP ${s}${reason ? ` (${reason})` : ''}`;
+    }
+    if (err.details === 'manifestLoadError') {
+      return 'manifest fetch failed (network or CORS)';
+    }
+    if (err.details === 'manifestParsingError') {
+      return 'manifest could not be parsed — bad or empty playlist';
+    }
+    if (err.details === 'manifestIncompatibleCodecsError') {
+      return 'codec not supported by this browser (likely HEVC)';
+    }
+    if (err.details === 'levelLoadError') {
+      return 'stream variant list fetch failed';
+    }
+    if (err.details === 'fragLoadError') {
+      return 'segment fetch failed (network, CORS, or auth)';
+    }
+    if (err.details === 'fragDecryptError') {
+      return 'segment decryption failed — DRM-protected stream';
+    }
+    if (err.type === 'mediaError' && err.details === 'bufferIncompatibleCodecsError') {
+      return 'browser could not decode stream (codec)';
+    }
+    if (err.message) return err.message;
+    return err.details || err.type || 'unknown error';
   }
 
   function attachSource(url) {
@@ -261,6 +393,25 @@
         });
       });
       hls.on(window.Hls.Events.ERROR, (_evt, data) => {
+        // Capture the failure for the eventual "all sources
+        // failed" summary. hls.js surfaces the HTTP response on
+        // the .response field for manifest/level/frag load errors;
+        // for media errors (decode) the .details field tells us
+        // whether it's a codec mismatch (bufferIncompatibleCodecs
+        // Error) or something else.
+        if (data.fatal || data.details === 'manifestIncompatibleCodecsError' ||
+            data.details === 'bufferIncompatibleCodecsError') {
+          const status = data.response && data.response.code
+            ? data.response.code
+            : null;
+          errorLog.push({
+            url,
+            type: data.type,
+            details: data.details,
+            status,
+            message: data.error ? String(data.error.message || data.error) : null,
+          });
+        }
         if (!data.fatal) return; // non-fatal: hls.js recovers itself
         console.warn('hls fatal error', data);
         advanceOrFail(data.details || data.type);
@@ -269,7 +420,22 @@
       // Native HLS (iOS Safari, macOS Safari, some smart TVs).
       video.src = url;
       video.play().catch((e) => console.warn('autoplay blocked:', e));
-      video.addEventListener('error', () => advanceOrFail('native error'), { once: true });
+      const onError = () => {
+        // Native <video> doesn't give us hls.js-style structured
+        // error data. Best effort: read MediaError.code off the
+        // element after the error event fires.
+        const v = video;
+        const me = v && v.error;
+        errorLog.push({
+          url,
+          type: 'nativeMediaError',
+          details: me ? `native code ${me.code}` : 'native error',
+          status: null,
+          message: me ? me.message || `MediaError code ${me.code}` : null,
+        });
+        advanceOrFail('native error');
+      };
+      video.addEventListener('error', onError, { once: true });
     } else {
       setStatus('Your browser does not support HLS playback.');
     }

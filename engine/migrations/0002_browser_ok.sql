@@ -1,0 +1,25 @@
+-- Per-stream browser-playability flag.
+--
+-- The public site's HLS player is a browser, but the engine's health
+-- probe historically used VLC's User-Agent because the public M3U
+-- playlist is consumed by VLC/TiviMate/IPTV Smarters and those clients
+-- tend to be the most permissive. The trade-off: a stream that 200s
+-- to VLC may 400 to a real browser (e.g. Plex/Xumo behind a
+-- CloudFront function that keys off UA prefixes), so the catalog
+-- stored streams the player can't actually play.
+--
+-- We add a *separate* probe with a browser-like UA and record the
+-- result here. The web player's stream-list publisher (publish_stream_
+-- lists) filters to browser_ok IS NULL OR browser_ok = 1 so the player
+-- only ever sees URLs we believe a browser can play. The public M3U
+-- playlist and the /s/<token> 302s stay unchanged — they still use
+-- every online stream — so VLC/TiviMate users see the full set.
+--
+--   NULL = not yet probed (or probe inconclusive)
+--    1   = probe returned 2xx with an M3U-shaped body
+--    0   = probe returned 4xx/5xx or a non-M3U body
+--
+-- NULL is intentionally the default (NOT 1) so a brand-new import
+-- doesn't claim browser-compatibility before being verified.
+
+ALTER TABLE streams ADD COLUMN browser_ok INTEGER;
