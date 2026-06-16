@@ -52,12 +52,14 @@
 
     <script src="/assets/app.js"></script>
     <script>
-        // Poll /api/account/info every 4s. When the account is ready
-        // (email present, credentials present) we redirect to login
-        // with a hint. We don't auto-login; the customer uses the
-        // email + password from the welcome email.
+        // Poll /api/checkout/status?order_id=O-XXXX every 4s.
+        // When the account is ready (CAPTURE.COMPLETED has fired
+        // and the Gold Panel line is provisioned) we redirect to
+        // login. We don't auto-login; the customer uses the email
+        // + password from the welcome email.
         (function () {
-            const subId = new URLSearchParams(location.search).get("sub_id");
+            const orderId = new URLSearchParams(location.search).get("order_id")
+                || new URLSearchParams(location.search).get("sub_id"); // legacy
             let attempts = 0;
             const maxAttempts = 30; // ~2 min
             const status = document.getElementById("status");
@@ -65,12 +67,8 @@
             async function tick() {
                 attempts += 1;
                 try {
-                    // Try to get info with the not-yet-existing session.
-                    // It will 401 until activation completes and the
-                    // customer sets a password. We use a different
-                    // poll endpoint that doesn't require auth.
                     const res = await fetch(
-                        `/api/checkout/status?sub_id=${encodeURIComponent(subId || "")}`,
+                        `/api/checkout/status?order_id=${encodeURIComponent(orderId || "")}`,
                         { credentials: "include" }
                     );
                     if (res.ok) {

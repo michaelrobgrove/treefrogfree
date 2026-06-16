@@ -92,9 +92,8 @@ async function panelGet<T = unknown>(params: Record<string, string>): Promise<T>
 
 /** List custom bouquets configured by the reseller in the panel. */
 export async function listBouquets(): Promise<Bouquet[]> {
-    const data = await panelGet<Array<{ id: string; name: string }>>({ action: "bouquet" });
     // The `action=bouquet` response is an array of bouquets, not a
-    // single object with `status: true` — return it as-is.
+    // single object with `status: true` — fetch it directly.
     const all = await fetch(`${PANEL_BASE}?action=bouquet&api_key=${encodeURIComponent(apiKey())}`);
     const arr = await all.json();
     return (arr as Array<{ id: string; name: string }>).map((b) => ({

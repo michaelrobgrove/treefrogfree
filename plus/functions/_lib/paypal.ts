@@ -1,28 +1,42 @@
-/** PayPal Subscriptions API client.
+/** PayPal Orders API client.
  *
- *  Uses the REST API at `${PAYPAL_API_BASE}/v1/...` (sandbox or
- *  live, controlled by env). Auth is a short-lived OAuth2 token
- *  issued by `/v1/oauth2/token`; we cache it in KV under
- *  `paypal:oauth_token` with a 9-hour TTL (PayPal's own expiry
- *  minus a 5-min safety margin).
+ *  We use Orders (one-time payments) — NOT Subscriptions — and
+ *  generate a fresh payment link whenever the customer needs
+ *  to pay (initial checkout, manual renewal, etc.). PayPal
+ *  auto-bills nothing; the site owns the renewal schedule.
+ *
+ *  Auth is a short-lived OAuth2 token from `/v1/oauth2/token`,
+ *  cached in KV under `paypal:oauth_token` with a 9-hour TTL
+ *  (PayPal's own expiry minus a 5-min safety margin).
  *
  *  Webhook signature verification goes through PayPal's REST
- *  endpoint `/v1/notifications/verify-webhook-signature` rather
- *  than re-implementing the cert+sig dance. PayPal only returns
- *  "SUCCESS" or "FAILURE", and the response is what we trust.
+ *  endpoint `/v1/notifications/verify-webhook-signature`. PayPal
+ *  only returns "SUCCESS" or "FAILURE", and the response is
+ *  what we trust.
  */
 
-export interface PayPalSubscription {
+export interface PayPalOrder {
     id: string;
-    plan_id: string;
     status: string;
     custom_id?: string;
-    subscriber?: { email_address?: string };
-    billing_info?: {
-        next_billing_time?: string;
-        last_payment?: { time?: string };
-    };
+    purchase_units?: Array<{
+        custom_id?: string;
+        amount?: { currency_code: string; value: string };
+        payments?: {
+            captures?: Array<{ id: string; status: string }>;
+        };
+    }>;
+    links: Array<{ href: string; rel: string }>;
+}
+
+export interface PayPalCapture {
+    id: string;
+    status: string;
+    custom_id?: string;
+    amount?: { currency_code: string; value: string };
+    supplementary_data?: { related_ids?: { order_id?: string } };
     create_time?: string;
+    update_time?: string;
 }
 
 function apiBase(): string {
@@ -98,21 +112,44 @@ async function pp<T>(kv: KVNamespace, path: string, init: RequestInit = {}): Pro
     return await resp.json() as T;
 }
 
-/** Create a subscription. Returns the full response so the
- *  caller can pluck out the `links[rel=approve].href`. */
-export async function createSubscription(
+/** Create a one-time Order. Returns the full response so the
+ *  caller can pluck out the `links[rel=approve].href`.
+ *
+ *  The order carries the (plan, bouquet) selection in
+ *  `purchase_units[0].custom_id` as "{months}|{bouquet}" so
+ *  the webhook knows what was bought without trusting the
+ *  client. The order is created with `intent: CAPTURE` and
+ *  is captured server-side on the
+ *  `CHECKOUT.ORDER.APPROVED` webhook (or here, see the
+ *  `capture` flag). */
+export async function createOrder(
     kv: KVNamespace,
-    opts: { plan_id: string; custom_id: string; return_url: string; cancel_url: string },
-): Promise<PayPalSubscription & { links: Array<{ href: string; rel: string }> }> {
-    return pp(kv, "/v1/billing/subscriptions", {
+    opts: {
+        amount_usd: number;
+        custom_id: string;
+        description: string;
+        return_url: string;
+        cancel_url: string;
+    },
+): Promise<PayPalOrder> {
+    return pp<PayPalOrder>(kv, "/v2/checkout/orders", {
         method: "POST",
         body: JSON.stringify({
-            plan_id: opts.plan_id,
-            custom_id: opts.custom_id,
+            intent: "CAPTURE",
+            purchase_units: [
+                {
+                    custom_id: opts.custom_id,
+                    description: opts.description,
+                    amount: {
+                        currency_code: "USD",
+                        value: opts.amount_usd.toFixed(2),
+                    },
+                },
+            ],
             application_context: {
                 brand_name: "Tree Frog Plus",
                 shipping_preference: "NO_SHIPPING",
-                user_action: "SUBSCRIBE_NOW",
+                user_action: "PAY_NOW",
                 return_url: opts.return_url,
                 cancel_url: opts.cancel_url,
             },
@@ -120,23 +157,55 @@ export async function createSubscription(
     });
 }
 
-/** Cancel a subscription (cancel-at-period-end). */
-export async function cancelSubscription(
+/** Capture an approved order. Normally triggered by the
+ *  CHECKOUT.ORDER.APPROVED webhook, but exposed for tests
+ *  and recovery flows. */
+export async function captureOrder(
     kv: KVNamespace,
-    subId: string,
-    reason: string,
-): Promise<void> {
-    await pp(kv, `/v1/billing/subscriptions/${encodeURIComponent(subId)}/cancel`, {
+    orderId: string,
+): Promise<PayPalOrder> {
+    return pp<PayPalOrder>(kv, `/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, {
         method: "POST",
-        body: JSON.stringify({ reason }),
+        body: "{}",
     });
 }
 
-export async function getSubscription(
+/** Refund a captured payment. Pass the full or partial amount
+ *  in `amount_usd`. If omitted, refunds the full capture. */
+export async function refundCapture(
     kv: KVNamespace,
-    subId: string,
-): Promise<PayPalSubscription> {
-    return pp<PayPalSubscription>(kv, `/v1/billing/subscriptions/${encodeURIComponent(subId)}`);
+    captureId: string,
+    opts: { amount_usd?: number; note?: string } = {},
+): Promise<unknown> {
+    const body: Record<string, unknown> = {};
+    if (opts.note) body.note_to_payer = opts.note;
+    if (typeof opts.amount_usd === "number") {
+        body.amount = {
+            currency_code: "USD",
+            value: opts.amount_usd.toFixed(2),
+        };
+    }
+    return pp<unknown>(kv, `/v2/payments/captures/${encodeURIComponent(captureId)}/refund`, {
+        method: "POST",
+        body: JSON.stringify(body),
+    });
+}
+
+/** Look up a previously-created order (used by the thanks-page
+ *  poller as a fallback if the webhook is slow). */
+export async function getOrder(
+    kv: KVNamespace,
+    orderId: string,
+): Promise<PayPalOrder> {
+    return pp<PayPalOrder>(kv, `/v2/checkout/orders/${encodeURIComponent(orderId)}`);
+}
+
+/** Look up a capture (used to confirm a webhook event). */
+export async function getCapture(
+    kv: KVNamespace,
+    captureId: string,
+): Promise<PayPalCapture> {
+    return pp<PayPalCapture>(kv, `/v2/payments/captures/${encodeURIComponent(captureId)}`);
 }
 
 /** Verify a webhook delivery. Returns true if the signature

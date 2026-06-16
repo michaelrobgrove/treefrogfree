@@ -206,3 +206,47 @@ Your ${opts.months_added}-month renewal cleared. New expiry: ${opts.new_expire}.
 `;
     return { subject, html, text };
 }
+
+export function renewalLinkEmail(opts: {
+    email: string;
+    months: number;
+    amount_usd: number;
+    payment_url: string;
+    dashboard_url: string;
+}): { subject: string; html: string; text: string } {
+    const subject = `Your Tree Frog Plus renewal link ($${opts.amount_usd.toFixed(2)})`;
+    const html = layout(`
+        <h2 style="margin:0 0 12px;font-size:20px;">Ready to renew?</h2>
+        <p style="margin:0 0 16px;color:#cbd5e1;">
+          Your ${opts.months}-month renewal link is ready. Pay securely with
+          PayPal — your Gold Panel line extends the moment the payment clears.
+        </p>
+        <p style="margin:0 0 4px;color:#94a3b8;font-size:13px;">Amount</p>
+        <p style="margin:0 0 24px;color:#f9fafb;font-size:28px;font-weight:700;">
+          $${opts.amount_usd.toFixed(2)}
+        </p>
+        <div style="text-align:center;margin:8px 0 24px;">
+          <a href="${escapeHtml(opts.payment_url)}"
+             style="display:inline-block;background:#22c55e;color:#111827;font-weight:600;text-decoration:none;padding:14px 32px;border-radius:8px;">
+            Pay with PayPal
+          </a>
+        </div>
+        <p style="margin:0 0 4px;color:#94a3b8;font-size:12px;">
+          Or open your dashboard: <a href="${escapeHtml(opts.dashboard_url)}" style="color:#22c55e;">${escapeHtml(opts.dashboard_url)}</a>
+        </p>
+        <p style="margin:24px 0 0;color:#94a3b8;font-size:12px;">
+          The link is good for one payment. Didn't request this? Reply to this email.
+        </p>
+    `);
+    const text = `Ready to renew?
+
+Your ${opts.months}-month renewal link is ready. Pay securely with PayPal.
+
+Amount: $${opts.amount_usd.toFixed(2)}
+
+Pay: ${opts.payment_url}
+
+Or open your dashboard: ${opts.dashboard_url}
+`;
+    return { subject, html, text };
+}

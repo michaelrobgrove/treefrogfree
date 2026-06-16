@@ -1,24 +1,34 @@
 /** POST /api/paypal-webhook
  *
- *  Receives PayPal lifecycle events. Each event is verified
- *  against PayPal's webhook signature, deduplicated by event_id,
- *  and dispatched to the right handler.
+ *  Receives PayPal lifecycle events for the ORDERS API
+ *  (one-time payments — no subscriptions). Each event is
+ *  verified against PayPal's webhook signature, deduplicated
+ *  by event_id, and dispatched to the right handler.
  *
- *  Flow:
- *   CREATED  → record subscription in KV as "pending"
- *   ACTIVATED → create Gold Panel M3U line, store creds,
- *               send welcome email
- *   SALE.COMPLETED → renew Gold Panel line, update expires_at,
- *                    send renewal receipt
- *   CANCELLED → mark cancel_at_period_end = true (line stays live
- *               until EXPIRED)
- *   EXPIRED / SUSPENDED → call Gold Panel device_status disable
- *   PAYMENT.FAILED → mark account, email customer
+ *  Events we handle:
+ *   CHECKOUT.ORDER.APPROVED       — buyer approved, we capture
+ *   PAYMENT.CAPTURE.COMPLETED     — money in → provision/extend
+ *   PAYMENT.CAPTURE.DENIED        — payment failed
+ *   PAYMENT.CAPTURE.REFUNDED      — capture was refunded
+ *
+ *  The custom_id we set on the order tells us what to do:
+ *    "{months}|{bouquet}"   — initial checkout, create the line
+ *    "renew|{order_id}|{months}" — renewal, extend the line
+ *
+ *  Flow for the initial checkout:
+ *   APPROVED → CAPTURE (server-side)
+ *   CAPTURE.COMPLETED → create Gold Panel M3U line, store
+ *                       creds, send welcome email
+ *
+ *  Flow for a renewal:
+ *   APPROVED → CAPTURE
+ *   CAPTURE.COMPLETED → Gold Panel `action=renew`, update
+ *                       expires_at, send renewal receipt
  */
 
-import { verifyWebhookSignature, getSubscription } from "../_lib/paypal";
+import { verifyWebhookSignature, captureOrder } from "../_lib/paypal";
 import { claimEventId, getAccountBySub, putAccount, type Account } from "../_lib/kv";
-import { paypalPlanToSku, bouquetToPanelId } from "../_lib/plans";
+import { bouquetToPanelId, type BouquetId } from "../_lib/plans";
 import { createM3U, renewM3U, getDeviceInfo, setDeviceStatus } from "../_lib/goldpanel";
 import { welcomeEmail, paymentFailedEmail, renewalReceiptEmail, sendEmail } from "../_lib/email";
 import { hashPassword } from "../_lib/session";
@@ -70,10 +80,9 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
     try {
         await dispatch(event, eventType, {
             kv,
-            getSubscription: (id: string) => getSubscription(kv, id),
+            captureOrder: (id: string) => captureOrder(kv, id),
             getAccount: (id: string) => getAccountBySub(kv, id),
             putAccount: (a: Account) => putAccount(kv, a),
-            paypalPlanToSku,
             bouquetToPanelId,
             createM3U,
             renewM3U,
@@ -96,13 +105,12 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
 
 interface DispatchDeps {
     kv: KVNamespace;
-    getSubscription: (id: string) => Promise<any>;
+    captureOrder: (id: string) => Promise<any>;
     getAccount: (id: string) => Promise<Account | null>;
     putAccount: (a: Account) => Promise<void>;
-    paypalPlanToSku: (planId: string) => { months: any; bouquet: any } | null;
-    bouquetToPanelId: (b: any) => string;
-    createM3U: (opts: { sub: any; pack: string; country?: string; notes?: string }) => Promise<any>;
-    renewM3U: (opts: { username: string; password: string; sub: any }) => Promise<any>;
+    bouquetToPanelId: (b: BouquetId) => string;
+    createM3U: (opts: { sub: 3 | 6 | 12; pack: string; country?: string; notes?: string }) => Promise<any>;
+    renewM3U: (opts: { username: string; password: string; sub: 1 | 3 | 6 | 12 }) => Promise<any>;
     getDeviceInfo: (opts: { username: string; password: string }) => Promise<any>;
     setDeviceStatus: (opts: { user_id: string; status: "enable" | "disable" }) => Promise<any>;
     welcomeEmail: (opts: any) => { subject: string; html: string; text: string };
@@ -115,173 +123,102 @@ interface DispatchDeps {
 
 async function dispatch(event: any, eventType: string, d: DispatchDeps): Promise<void> {
     const resource = event.resource || {};
-    const subId: string = resource.id || resource.billing_agreement_id;
-    if (!subId) {
-        console.warn("Webhook event missing subscription id", eventType, event.id);
+    // The order id lives in different places depending on the event:
+    //   CHECKOUT.ORDER.APPROVED         → resource.id
+    //   PAYMENT.CAPTURE.*               → resource.supplementary_data.related_ids.order_id
+    const orderId: string =
+        resource.id
+        || resource?.supplementary_data?.related_ids?.order_id
+        || "";
+    if (!orderId) {
+        console.warn("Webhook event missing order id", eventType, event.id);
         return;
     }
 
+    // The custom_id we set on the order tells us if this is
+    // an initial checkout or a renewal, and what to do.
+    const customId: string = resource.custom_id
+        || resource.purchase_units?.[0]?.custom_id
+        || "";
+    const custom = parseCustomId(customId);
+
     switch (eventType) {
-        case "BILLING.SUBSCRIPTION.CREATED": {
-            const sku = resource.plan_id ? d.paypalPlanToSku(resource.plan_id) : null;
-            const sub = await d.getSubscription(subId);
-            const email: string = sub.subscriber?.email_address
-                || resource.subscriber?.email_address
+        case "CHECKOUT.ORDER.APPROVED": {
+            // Buyer approved. Capture server-side. The actual
+            // provisioning happens on the CAPTURE.COMPLETED
+            // event that follows.
+            console.log("ORDER.APPROVED for", orderId, "→ capturing");
+            try {
+                await d.captureOrder(orderId);
+            } catch (e) {
+                console.error("ORDER.APPROVED: capture failed:", (e as Error).message);
+                throw e;
+            }
+            return;
+        }
+
+        case "PAYMENT.CAPTURE.COMPLETED": {
+            const captureId: string = resource.id || "";
+            const buyerEmail: string =
+                resource.payer?.email_address
+                || resource?.payee?.email_address
                 || "";
-            if (!email) {
-                console.warn("CREATED: no email on subscription", subId);
-                return;
+            if (!buyerEmail) {
+                console.warn("CAPTURE.COMPLETED: no payer email", orderId);
+                // Don't throw — still record the capture id.
             }
-            const sitePw = generateSitePassword();
-            const acct: Account = {
-                subscription_id: subId,
-                email: email.toLowerCase(),
-                panel_user_id: null,
-                panel_username: null,
-                panel_password: null,
-                site_password: sitePw,
-                password_auth: await d.hashPassword(sitePw),
-                plan_months: sku?.months ?? 12,
-                bouquet: sku?.bouquet ?? "us",
-                panel_bouquet_id: sku ? d.bouquetToPanelId(sku.bouquet) : "",
-                created_at: new Date().toISOString(),
-                expires_at: null,
-                next_billing_at: null,
-                status: "pending",
-                cancel_at_period_end: false,
-            };
-            await d.putAccount(acct);
-            console.log("CREATED recorded for sub", subId, "email", email);
+            if (custom.kind === "initial") {
+                await handleInitialCapture(d, orderId, captureId, custom, buyerEmail);
+            } else if (custom.kind === "renewal") {
+                await handleRenewalCapture(d, orderId, captureId, custom, buyerEmail);
+            } else {
+                console.warn("CAPTURE.COMPLETED: unparseable custom_id", customId);
+            }
             return;
         }
 
-        case "BILLING.SUBSCRIPTION.ACTIVATED": {
-            const acct = await d.getAccount(subId);
+        case "PAYMENT.CAPTURE.DENIED": {
+            // Capture failed (e.g. card declined at capture time).
+            const acct = await d.getAccount(orderId);
             if (!acct) {
-                console.warn("ACTIVATED for unknown sub", subId);
+                console.warn("CAPTURE.DENIED: unknown order", orderId);
                 return;
             }
-            if (acct.status === "active") {
-                console.log("ACTIVATED: sub already active, skipping", subId);
-                return;
-            }
-            const panelBouquet = d.bouquetToPanelId(acct.bouquet);
-            const created = await d.createM3U({
-                sub: acct.plan_months,
-                pack: panelBouquet,
-                country: "",
-                notes: `tfplus:${acct.email}`,
-            });
-            acct.panel_user_id    = String(created.user_id);
-            acct.panel_username   = created.username;
-            acct.panel_password   = created.password;
-            acct.panel_bouquet_id = panelBouquet;
-            acct.status = "active";
-            acct.next_billing_at = resource.billing_info?.next_billing_time || null;
-            // Pull the new expiry.
-            try {
-                const info = await d.getDeviceInfo({
-                    username: created.username,
-                    password: created.password,
-                });
-                acct.expires_at = info.expire || null;
-            } catch (e) {
-                console.warn("ACTIVATED: device_info follow-up failed:", (e as Error).message);
-            }
-            await d.putAccount(acct);
-            // Send the welcome email.
-            const dnsPrimary   = String((globalThis as any).DNS_PRIMARY   || "https://apex.tfplus.stream");
-            const dnsSecondary = String((globalThis as any).DNS_SECONDARY || "http://comet.tfplus.stream");
-            const tmpl = d.welcomeEmail({
-                email: acct.email,
-                username: created.username,
-                password: acct.site_password,
-                dns_primary: dnsPrimary,
-                dns_secondary: dnsSecondary,
-                xc_server: dnsPrimary,
-                setup_url: `${d.publicBaseUrl}/setup.html`,
-            });
-            await d.sendEmail({ to: acct.email, ...tmpl });
-            console.log("ACTIVATED: account ready for", acct.email);
-            return;
-        }
-
-        case "PAYMENT.SALE.COMPLETED": {
-            const acct = await d.getAccount(subId);
-            if (!acct || !acct.panel_username || !acct.panel_password) {
-                console.warn("SALE.COMPLETED: missing account or creds", subId);
-                return;
-            }
-            await d.renewM3U({
-                username: acct.panel_username,
-                password: acct.panel_password,
-                sub: acct.plan_months,
-            });
-            try {
-                const info = await d.getDeviceInfo({
-                    username: acct.panel_username,
-                    password: acct.panel_password,
-                });
-                acct.expires_at = info.expire || acct.expires_at;
-            } catch (e) {
-                console.warn("SALE.COMPLETED: device_info failed", (e as Error).message);
-            }
-            acct.status = "active";
-            await d.putAccount(acct);
-            if (acct.expires_at) {
-                const tmpl = d.renewalReceiptEmail({
-                    email: acct.email,
-                    new_expire: acct.expires_at,
-                    months_added: acct.plan_months,
-                });
-                try { await d.sendEmail({ to: acct.email, ...tmpl }); }
-                catch (e) { /* non-fatal */ }
-            }
-            console.log("SALE.COMPLETED: renewed", subId, "→", acct.expires_at);
-            return;
-        }
-
-        case "BILLING.SUBSCRIPTION.CANCELLED": {
-            const acct = await d.getAccount(subId);
-            if (!acct) return;
-            acct.cancel_at_period_end = true;
-            acct.status = "cancel_at_period_end";
-            await d.putAccount(acct);
-            console.log("CANCELLED: cancel_at_period_end set for", subId);
-            return;
-        }
-
-        case "BILLING.SUBSCRIPTION.EXPIRED":
-        case "BILLING.SUBSCRIPTION.SUSPENDED": {
-            const acct = await d.getAccount(subId);
-            if (!acct || !acct.panel_user_id) {
-                console.warn(`${eventType}: missing account or panel user_id`, subId);
-                return;
-            }
-            try {
-                await d.setDeviceStatus({ user_id: acct.panel_user_id, status: "disable" });
-            } catch (e) {
-                console.warn(`${eventType}: disable failed:`, (e as Error).message);
-            }
-            acct.status = "expired";
-            acct.cancel_at_period_end = false;
-            await d.putAccount(acct);
-            console.log(`${eventType}: disabled panel account for`, subId);
-            return;
-        }
-
-        case "BILLING.SUBSCRIPTION.PAYMENT.FAILED": {
-            const acct = await d.getAccount(subId);
-            if (!acct) return;
             acct.status = "payment_failed";
             await d.putAccount(acct);
-            const tmpl = d.paymentFailedEmail({
-                email: acct.email,
-                update_url: "https://www.paypal.com/myaccount/autopay/",
-            });
-            try { await d.sendEmail({ to: acct.email, ...tmpl }); }
-            catch (e) { /* non-fatal */ }
-            console.log("PAYMENT.FAILED: flagged", subId);
+            try {
+                const tmpl = d.paymentFailedEmail({
+                    email: acct.email,
+                    update_url: "https://www.paypal.com/myaccount/autopay/",
+                });
+                await d.sendEmail({ to: acct.email, ...tmpl });
+            } catch (e) { /* non-fatal */ }
+            console.log("CAPTURE.DENIED: flagged", orderId);
+            return;
+        }
+
+        case "PAYMENT.CAPTURE.REFUNDED": {
+            const acct = await d.getAccount(orderId);
+            if (!acct) {
+                console.warn("CAPTURE.REFUNDED: unknown order", orderId);
+                return;
+            }
+            acct.status = "refunded";
+            // Disable the Gold Panel line.
+            if (acct.panel_user_id) {
+                try {
+                    await d.setDeviceStatus({ user_id: acct.panel_user_id, status: "disable" });
+                } catch (e) {
+                    console.warn("CAPTURE.REFUNDED: disable failed:", (e as Error).message);
+                }
+            }
+            // If this was a pending renewal, clear it.
+            if (acct.pending_renewal_order_id === orderId) {
+                acct.pending_renewal_order_id = null;
+                acct.pending_renewal_months = null;
+            }
+            await d.putAccount(acct);
+            console.log("CAPTURE.REFUNDED: account", orderId, "marked refunded");
             return;
         }
 
@@ -291,8 +228,206 @@ async function dispatch(event: any, eventType: string, d: DispatchDeps): Promise
     }
 }
 
-/** Random 12-char site password (alphanumeric). The customer gets
- *  this in the welcome email; they can change it later (TODO). */
+/** Parse the custom_id we set on the order.
+ *  Returns `{ kind: "initial", months, bouquet }` or
+ *  `{ kind: "renewal", account_order_id, months }` or
+ *  `{ kind: "unknown" }`. */
+function parseCustomId(customId: string):
+    | { kind: "initial"; months: 3 | 6 | 12; bouquet: BouquetId }
+    | { kind: "renewal"; account_order_id: string; months: 1 | 3 | 6 | 12 }
+    | { kind: "unknown" }
+{
+    if (!customId) return { kind: "unknown" };
+    const parts = customId.split("|");
+    if (parts.length === 2) {
+        const months = parseInt(parts[0], 10) as 3 | 6 | 12;
+        const bouquet = parts[1] as BouquetId;
+        if (![3, 6, 12].includes(months)) return { kind: "unknown" };
+        if (!["us_wo", "us_w", "ca_wo", "ca_w"].includes(bouquet)) return { kind: "unknown" };
+        return { kind: "initial", months, bouquet };
+    }
+    if (parts.length === 3 && parts[0] === "renew") {
+        const months = parseInt(parts[2], 10) as 1 | 3 | 6 | 12;
+        if (![1, 3, 6, 12].includes(months)) return { kind: "unknown" };
+        return { kind: "renewal", account_order_id: parts[1], months };
+    }
+    return { kind: "unknown" };
+}
+
+async function handleInitialCapture(
+    d: DispatchDeps,
+    orderId: string,
+    captureId: string,
+    custom: { kind: "initial"; months: 3 | 6 | 12; bouquet: BouquetId },
+    buyerEmail: string,
+): Promise<void> {
+    // If we already provisioned (webhook retry), skip.
+    const existing = await d.getAccount(orderId);
+    if (existing && existing.status === "active") {
+        console.log("CAPTURE.COMPLETED: account already active, skipping", orderId);
+        return;
+    }
+    if (!existing) {
+        // Brand-new account. We need a buyer's email to send
+        // the welcome message. If it's missing, fetch the
+        // order from PayPal.
+        let email = buyerEmail;
+        if (!email) {
+            // We can't pull the order here without making
+            // another API call. Log and bail — admin can
+            // recover manually by inserting the account
+            // record into KV.
+            console.error("CAPTURE.COMPLETED: missing buyer email for", orderId);
+            return;
+        }
+        const sitePw = generateSitePassword();
+        const panelBouquet = d.bouquetToPanelId(custom.bouquet);
+        const acct: Account = {
+            paypal_order_id: orderId,
+            latest_capture_id: captureId || null,
+            renewal_order_ids: [orderId],
+            pending_renewal_order_id: null,
+            pending_renewal_months: null,
+            email: email.toLowerCase(),
+            panel_user_id: null,
+            panel_username: null,
+            panel_password: null,
+            site_password: sitePw,
+            password_auth: await d.hashPassword(sitePw),
+            plan_months: custom.months,
+            bouquet: custom.bouquet,
+            panel_bouquet_id: panelBouquet,
+            created_at: new Date().toISOString(),
+            expires_at: null,
+            status: "pending",
+            cancel_at_period_end: false,
+        };
+        await d.putAccount(acct);
+        // Now create the Gold Panel M3U line.
+        await provisionGoldPanel(d, acct);
+        return;
+    }
+    // Pending account that finally got captured.
+    if (existing.status === "pending") {
+        existing.latest_capture_id = captureId || existing.latest_capture_id;
+        if (!existing.renewal_order_ids.includes(orderId)) {
+            existing.renewal_order_ids.push(orderId);
+        }
+        await d.putAccount(existing);
+        await provisionGoldPanel(d, existing);
+        return;
+    }
+    console.warn("CAPTURE.COMPLETED: account in unexpected state", orderId, existing.status);
+}
+
+async function provisionGoldPanel(d: DispatchDeps, acct: Account): Promise<void> {
+    try {
+        const created = await d.createM3U({
+            sub: acct.plan_months,
+            pack: acct.panel_bouquet_id,
+            country: "",
+            notes: `tfplus:${acct.email}`,
+        });
+        acct.panel_user_id    = String(created.user_id);
+        acct.panel_username   = created.username;
+        acct.panel_password   = created.password;
+        acct.panel_bouquet_id = acct.panel_bouquet_id || d.bouquetToPanelId(acct.bouquet);
+        acct.status = "active";
+        // Pull the expiry.
+        try {
+            const info = await d.getDeviceInfo({
+                username: created.username,
+                password: created.password,
+            });
+            acct.expires_at = info.expire || null;
+        } catch (e) {
+            console.warn("provision: device_info follow-up failed:", (e as Error).message);
+        }
+        await d.putAccount(acct);
+        // Send the welcome email.
+        const dnsPrimary   = String((globalThis as any).DNS_PRIMARY   || "https://apex.tfplus.stream");
+        const dnsSecondary = String((globalThis as any).DNS_SECONDARY || "http://comet.tfplus.stream");
+        const tmpl = d.welcomeEmail({
+            email: acct.email,
+            username: created.username,
+            password: acct.site_password,
+            dns_primary: dnsPrimary,
+            dns_secondary: dnsSecondary,
+            xc_server: dnsPrimary,
+            setup_url: `${d.publicBaseUrl}/setup.html`,
+        });
+        await d.sendEmail({ to: acct.email, ...tmpl });
+        console.log("provision: account ready for", acct.email);
+    } catch (e) {
+        console.error("provision: Gold Panel createM3U failed:", (e as Error).message);
+        // The account stays in `pending` — admin can retry by
+        // re-issuing the same PayPal Order (it'll be captured
+        // again and the dedup will see a fresh event id).
+    }
+}
+
+async function handleRenewalCapture(
+    d: DispatchDeps,
+    orderId: string,
+    captureId: string,
+    custom: { kind: "renewal"; account_order_id: string; months: 1 | 3 | 6 | 12 },
+    _buyerEmail: string,
+): Promise<void> {
+    const acct = await d.getAccount(custom.account_order_id);
+    if (!acct) {
+        console.warn("renewal: account", custom.account_order_id, "not found for order", orderId);
+        return;
+    }
+    if (!acct.panel_username || !acct.panel_password) {
+        console.warn("renewal: account", custom.account_order_id, "not yet provisioned");
+        return;
+    }
+    try {
+        await d.renewM3U({
+            username: acct.panel_username,
+            password: acct.panel_password,
+            sub: custom.months,
+        });
+    } catch (e) {
+        console.error("renewal: Gold Panel renewM3U failed:", (e as Error).message);
+        throw e; // PayPal will retry.
+    }
+    try {
+        const info = await d.getDeviceInfo({
+            username: acct.panel_username,
+            password: acct.panel_password,
+        });
+        acct.expires_at = info.expire || acct.expires_at;
+    } catch (e) {
+        console.warn("renewal: device_info follow-up failed:", (e as Error).message);
+    }
+    acct.status = "active";
+    acct.cancel_at_period_end = false;
+    acct.latest_capture_id = captureId || acct.latest_capture_id;
+    if (!acct.renewal_order_ids.includes(orderId)) {
+        acct.renewal_order_ids.push(orderId);
+    }
+    // Clear the pending pointer.
+    if (acct.pending_renewal_order_id === orderId) {
+        acct.pending_renewal_order_id = null;
+        acct.pending_renewal_months = null;
+    }
+    await d.putAccount(acct);
+    if (acct.expires_at) {
+        try {
+            const tmpl = d.renewalReceiptEmail({
+                email: acct.email,
+                new_expire: acct.expires_at,
+                months_added: custom.months,
+            });
+            await d.sendEmail({ to: acct.email, ...tmpl });
+        } catch (e) { /* non-fatal */ }
+    }
+    console.log("renewal: account", acct.email, "extended by", custom.months, "→", acct.expires_at);
+}
+
+/** Random 12-char site password (alphanumeric). The customer
+ *  gets this in the welcome email; they can change it later. */
 function generateSitePassword(): string {
     const alpha = "abcdefghijkmnpqrstuvwxyz23456789"; // no confusing chars
     const bytes = new Uint8Array(12);

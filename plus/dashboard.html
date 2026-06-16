@@ -51,13 +51,24 @@
                         </h1>
                         <p class="text-gray-400 text-sm">
                             <span id="status-text">Active</span>
-                            &middot; Renews <span id="next-billing">&mdash;</span>
+                            &middot; <span id="renewal-summary">&mdash;</span>
                         </p>
                     </div>
                     <div class="mt-4 md:mt-0 text-left md:text-right">
                         <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Expires</div>
                         <div id="expires-at" class="text-2xl font-bold">&mdash;</div>
                     </div>
+                </div>
+
+                <!-- Pending renewal notice (shown when /api/account/renew generated a link that's not yet paid) -->
+                <div id="pending-renewal-banner" class="hidden mt-4 bg-blue-500/10 border border-blue-500/30 rounded-xl p-3 text-sm text-blue-200">
+                    <strong>Renewal payment pending.</strong> We sent a payment link to <span id="pending-renewal-email">&mdash;</span> &mdash; or
+                    <a id="pending-renewal-link" href="#" class="underline">pay now</a>.
+                </div>
+
+                <!-- CTA banner (shown when within 7 days of expiry) -->
+                <div id="renew-cta-banner" class="hidden mt-4 bg-frog/10 border border-frog/30 rounded-xl p-3 text-sm text-frog/90">
+                    <strong>Heads up:</strong> your service expires in <span id="renew-cta-days">&mdash;</span>. Use the buttons below to extend.
                 </div>
 
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-6">
@@ -68,7 +79,7 @@
                     <div class="relative">
                         <button id="renew-btn" type="button"
                                 class="w-full bg-gray-800 hover:bg-gray-700 text-white font-semibold px-5 py-3 rounded-lg transition-colors tf-focus">
-                            + Renew months &darr;
+                            + Extend months &darr;
                         </button>
                         <div id="renew-menu"
                              class="hidden absolute z-10 mt-2 right-0 bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden">
@@ -80,12 +91,12 @@
                     </div>
                     <button id="cancel-btn" type="button"
                             class="bg-gray-800 hover:bg-red-900/40 text-red-300 hover:text-red-200 font-semibold px-5 py-3 rounded-lg transition-colors tf-focus">
-                        Cancel subscription
+                        Don't renew
                     </button>
                 </div>
 
                 <div id="cancel-banner" class="hidden mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-3 text-sm text-yellow-200">
-                    <strong>Cancellation scheduled.</strong> Your service runs until <span id="cancel-banner-date">&mdash;</span>. No refund, no further charges.
+                    <strong>Auto-renewal turned off.</strong> Your service runs until <span id="cancel-banner-date">&mdash;</span>. You can still pay to extend manually; no further automatic charges.
                 </div>
             </section>
 
@@ -167,8 +178,8 @@
                         <dd id="acct-email" class="font-mono">&mdash;</dd>
                     </div>
                     <div>
-                        <dt class="text-gray-400">Subscription ID</dt>
-                        <dd id="acct-subid" class="font-mono text-xs break-all">&mdash;</dd>
+                        <dt class="text-gray-400">Order ID</dt>
+                        <dd id="acct-orderid" class="font-mono text-xs break-all">&mdash;</dd>
                     </div>
                 </dl>
             </section>
@@ -177,19 +188,19 @@
 
     <!-- Cancel confirmation -->
     <dialog id="cancel-modal" class="bg-gray-800 border border-gray-700 rounded-2xl p-6 max-w-md w-full text-white">
-        <h2 class="text-xl font-bold mb-2">Cancel subscription?</h2>
+        <h2 class="text-xl font-bold mb-2">Turn off auto-renewal?</h2>
         <p class="text-sm text-gray-300 mb-6">
             Your service runs until <span id="cancel-modal-date" class="font-semibold text-white">&mdash;</span>.
-            We won't charge you again, and there are no refunds. You can re-subscribe anytime.
+            We won't charge you again. You can still extend manually anytime.
         </p>
         <div class="flex gap-3 justify-end">
             <button id="cancel-modal-close" type="button"
                     class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-sm font-semibold tf-focus">
-                Keep subscription
+                Keep auto-renew on
             </button>
             <button id="cancel-modal-confirm" type="button"
                     class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-semibold tf-focus">
-                Cancel at period end
+                Turn off auto-renew
             </button>
         </div>
     </dialog>
@@ -201,6 +212,14 @@
         (async function () {
             const loading = document.getElementById("loading");
             const content = document.getElementById("content");
+
+            // Surface renewal result/cancel from the URL.
+            const params = new URLSearchParams(location.search);
+            if (params.get("renewed") === "1") {
+                window.tf.toast("Payment received — extending your account…", "success");
+            } else if (params.get("renewal_cancelled") === "1") {
+                window.tf.toast("Renewal cancelled. No charge made.", "info");
+            }
 
             let me;
             try {
@@ -217,18 +236,18 @@
             content.classList.remove("hidden");
 
             const BOUQUET_LABELS = {
-                "us":          "US",
-                "us_adult":    "US + Adult",
-                "us_ca":       "US & Canada",
-                "us_ca_adult": "US & Canada + Adult",
+                "us_wo":  "US",
+                "us_w":   "US + Adult",
+                "ca_wo":  "Canada",
+                "ca_w":   "Canada + Adult",
             };
 
             // Populate fields.
             document.getElementById("plan-label").textContent    = `${me.plan_months} months`;
             document.getElementById("bouquet-label").textContent = BOUQUET_LABELS[me.bouquet] || me.bouquet;
             document.getElementById("expires-at").textContent    = window.tf.formatDate(me.expires_at);
-            document.getElementById("next-billing").textContent  = window.tf.formatDate(me.next_billing_at);
-            document.getElementById("status-text").textContent   = me.status || "Active";
+            document.getElementById("status-text").textContent   = humanStatus(me);
+            document.getElementById("renewal-summary").textContent = renewalSummary(me);
 
             document.getElementById("xc-server").textContent   = me.xc_server || "—";
             document.getElementById("xc-username").textContent = me.username   || "—";
@@ -237,7 +256,7 @@
             document.getElementById("dns-secondary").textContent = me.dns_secondary || "—";
 
             document.getElementById("acct-email").textContent = me.email || "—";
-            document.getElementById("acct-subid").textContent = me.subscription_id || "—";
+            document.getElementById("acct-orderid").textContent = me.paypal_order_id || "—";
 
             // Wire copy buttons that target a specific element by ID.
             document.querySelectorAll("[data-copy-target]").forEach((btn) => {
@@ -246,15 +265,40 @@
             });
             window.tf.bindCopyButtons();
 
+            // Pending renewal banner.
+            if (me.pending_renewal) {
+                const b = document.getElementById("pending-renewal-banner");
+                b.classList.remove("hidden");
+                document.getElementById("pending-renewal-email").textContent = me.email;
+                // We don't have the approval URL in /api/account/info, so the
+                // "pay now" link points back to the renew menu — let the
+                // user regenerate it.
+                document.getElementById("pending-renewal-link").href = "#renew-cta-banner";
+                document.getElementById("pending-renewal-link").textContent =
+                    `view pending +${me.pending_renewal.months}mo renewal`;
+            }
+
+            // Renew CTA banner — visible when within 7 days of expiry.
+            if (typeof me.days_until_expiry === "number" && me.days_until_expiry <= 7) {
+                const b = document.getElementById("renew-cta-banner");
+                b.classList.remove("hidden");
+                const days = me.days_until_expiry;
+                const text = days <= 0
+                    ? "today (already expired)"
+                    : (days === 1 ? "1 day" : `${days} days`);
+                document.getElementById("renew-cta-days").textContent = text;
+            }
+
             // Cancel-at-period-end banner.
             if (me.cancel_at_period_end) {
                 const banner = document.getElementById("cancel-banner");
                 banner.classList.remove("hidden");
                 document.getElementById("cancel-banner-date").textContent =
                     window.tf.formatDate(me.expires_at);
-                document.getElementById("cancel-btn").disabled = true;
-                document.getElementById("cancel-btn").textContent = "Cancellation scheduled";
-                document.getElementById("cancel-btn").classList.add("opacity-60", "cursor-not-allowed");
+                const cancelBtn = document.getElementById("cancel-btn");
+                cancelBtn.disabled = true;
+                cancelBtn.textContent = "Auto-renew off";
+                cancelBtn.classList.add("opacity-60", "cursor-not-allowed");
             }
 
             // Cancel modal.
@@ -263,7 +307,7 @@
             const cancelClose   = document.getElementById("cancel-modal-close");
             const cancelConfirm = document.getElementById("cancel-modal-confirm");
             const cancelDate    = document.getElementById("cancel-modal-date");
-            if (!me.cancel_at_period_end) {
+            if (!me.cancel_at_period_end && me.status !== "expired" && me.status !== "refunded") {
                 cancelDate.textContent = window.tf.formatDate(me.expires_at);
                 cancelBtn.addEventListener("click", () => cancelModal.showModal());
                 cancelClose.addEventListener("click", () => cancelModal.close());
@@ -273,17 +317,20 @@
                     try {
                         await window.tf.api("/api/account/cancel", { method: "POST" });
                         cancelModal.close();
-                        window.tf.toast("Cancellation scheduled.", "success");
+                        window.tf.toast("Auto-renewal turned off.", "success");
                         setTimeout(() => window.location.reload(), 800);
                     } catch (e) {
                         window.tf.toast(e.message || "Could not cancel.", "error");
                         cancelConfirm.disabled = false;
-                        cancelConfirm.textContent = "Cancel at period end";
+                        cancelConfirm.textContent = "Turn off auto-renew";
                     }
                 });
+            } else {
+                cancelBtn.disabled = true;
+                cancelBtn.classList.add("opacity-60", "cursor-not-allowed");
             }
 
-            // Renew menu.
+            // Renew menu — generates a payment link and surfaces it.
             const renewBtn  = document.getElementById("renew-btn");
             const renewMenu = document.getElementById("renew-menu");
             renewBtn.addEventListener("click", (e) => {
@@ -297,18 +344,23 @@
                     renewMenu.classList.add("hidden");
                     const months = parseInt(opt.getAttribute("data-months"), 10);
                     renewBtn.disabled = true;
-                    renewBtn.innerHTML = '<span class="tf-spinner"></span> Working…';
+                    renewBtn.innerHTML = '<span class="tf-spinner"></span> Creating link…';
                     try {
                         const res = await window.tf.api("/api/account/renew", {
                             method: "POST",
                             body: { months },
                         });
-                        window.tf.toast(`Extended by ${months} months. New expiry: ${window.tf.formatDate(res.expires_at)}`, "success");
-                        setTimeout(() => window.location.reload(), 1200);
+                        // Open the approval URL in a new tab so the
+                        // customer can pay without leaving the
+                        // dashboard context, and reload in a sec
+                        // to pick up the pending-renewal banner.
+                        window.open(res.approval_url, "_blank", "noopener");
+                        window.tf.toast(`$${res.amount_usd.toFixed(2)} renewal link sent to ${me.email}.`, "success");
+                        setTimeout(() => window.location.reload(), 1500);
                     } catch (e) {
-                        window.tf.toast(e.message || "Could not renew.", "error");
+                        window.tf.toast(e.message || "Could not create renewal link.", "error");
                         renewBtn.disabled = false;
-                        renewBtn.textContent = "+ Renew months ↓";
+                        renewBtn.textContent = "+ Extend months ↓";
                     }
                 });
             });
@@ -320,6 +372,28 @@
                 window.location.href = "login.html";
             });
         })();
+
+        function humanStatus(me) {
+            if (me.status === "active") return "Active";
+            if (me.status === "pending") return "Setting up…";
+            if (me.status === "cancel_at_period_end") return "Auto-renew off";
+            if (me.status === "payment_failed") return "Payment failed";
+            if (me.status === "expired") return "Expired";
+            if (me.status === "refunded") return "Refunded";
+            return me.status || "—";
+        }
+        function renewalSummary(me) {
+            if (!me.expires_at) return "—";
+            if (me.cancel_at_period_end) {
+                return `manual renewal required to continue after ${window.tf.formatDate(me.expires_at)}`;
+            }
+            if (typeof me.days_until_expiry === "number") {
+                if (me.days_until_expiry <= 0) return "renew now to restore service";
+                if (me.days_until_expiry === 1) return "expires in 1 day";
+                return `expires in ${me.days_until_expiry} days`;
+            }
+            return "—";
+        }
     </script>
 </body>
 </html>

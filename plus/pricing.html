@@ -68,7 +68,7 @@
             <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 text-center">Bouquet</h2>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3" id="bouquets-grid">
                 <label class="bouquet-btn tf-card bg-gray-800/60 border-2 border-gray-700 rounded-2xl p-5 cursor-pointer tf-focus">
-                    <input type="radio" name="bouquet" value="us" class="sr-only"/>
+                    <input type="radio" name="bouquet" value="us_wo" class="sr-only"/>
                     <div class="flex items-start gap-3">
                         <div class="text-2xl">&#x1F1FA;&#x1F1F8;</div>
                         <div class="flex-1">
@@ -78,7 +78,7 @@
                     </div>
                 </label>
                 <label class="bouquet-btn tf-card bg-gray-800/60 border-2 border-gray-700 rounded-2xl p-5 cursor-pointer tf-focus">
-                    <input type="radio" name="bouquet" value="us_adult" class="sr-only"/>
+                    <input type="radio" name="bouquet" value="us_w" class="sr-only"/>
                     <div class="flex items-start gap-3">
                         <div class="text-2xl">&#x1F1FA;&#x1F1F8; <span class="text-xs">18+</span></div>
                         <div class="flex-1">
@@ -88,22 +88,22 @@
                     </div>
                 </label>
                 <label class="bouquet-btn tf-card bg-gray-800/60 border-2 border-gray-700 rounded-2xl p-5 cursor-pointer tf-focus">
-                    <input type="radio" name="bouquet" value="us_ca" class="sr-only"/>
+                    <input type="radio" name="bouquet" value="ca_wo" class="sr-only"/>
                     <div class="flex items-start gap-3">
-                        <div class="text-2xl">&#x1F1FA;&#x1F1F8;&#x1F1E8;&#x1F1E6;</div>
+                        <div class="text-2xl">&#x1F1E8;&#x1F1E6;</div>
                         <div class="flex-1">
-                            <div class="font-semibold">US &amp; Canada</div>
-                            <div class="text-sm text-gray-400 mt-1">US and Canadian channels, no adult.</div>
+                            <div class="font-semibold">Canada</div>
+                            <div class="text-sm text-gray-400 mt-1">Canadian channels, no adult.</div>
                         </div>
                     </div>
                 </label>
                 <label class="bouquet-btn tf-card bg-gray-800/60 border-2 border-gray-700 rounded-2xl p-5 cursor-pointer tf-focus">
-                    <input type="radio" name="bouquet" value="us_ca_adult" class="sr-only"/>
+                    <input type="radio" name="bouquet" value="ca_w" class="sr-only"/>
                     <div class="flex items-start gap-3">
-                        <div class="text-2xl">&#x1F1FA;&#x1F1F8;&#x1F1E8;&#x1F1E6; <span class="text-xs">18+</span></div>
+                        <div class="text-2xl">&#x1F1E8;&#x1F1E6; <span class="text-xs">18+</span></div>
                         <div class="flex-1">
-                            <div class="font-semibold">US &amp; Canada + Adult</div>
-                            <div class="text-sm text-gray-400 mt-1">US and Canadian channels, adult included.</div>
+                            <div class="font-semibold">Canada + Adult</div>
+                            <div class="text-sm text-gray-400 mt-1">Canadian channels, adult included.</div>
                         </div>
                     </div>
                 </label>
@@ -177,10 +177,10 @@
     <script>
         (function () {
             const BOUQUET_LABELS = {
-                "us":         "US",
-                "us_adult":   "US + Adult",
-                "us_ca":      "US & Canada",
-                "us_ca_adult": "US & Canada + Adult",
+                "us_wo":  "US",
+                "us_w":   "US + Adult",
+                "ca_wo":  "Canada",
+                "ca_w":   "Canada + Adult",
             };
 
             let selectedPlan = 12; // default: best value
@@ -249,7 +249,12 @@
                         body: { plan_months: selectedPlan, bouquet: selectedBouquet },
                     });
                     if (!data.approval_url) throw new Error("No approval URL returned.");
-                    window.location.href = data.approval_url;
+                    // PayPal preserves extra query params on
+                    // return_url, so we can hand the thanks page
+                    // the order id to poll against.
+                    const u = new URL(data.approval_url);
+                    if (data.order_id) u.searchParams.set("order_id", data.order_id);
+                    window.location.href = u.toString();
                 } catch (e) {
                     window.tf.toast(e.message || "Could not start checkout.", "error");
                     checkoutBtn.disabled = false;

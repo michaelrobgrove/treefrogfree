@@ -43,7 +43,7 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
     if (!ok) {
         return json({ error: "Invalid email or password" }, 401);
     }
-    const { cookie } = await createSession(kv, acct.subscription_id);
+    const { cookie } = await createSession(kv, acct.paypal_order_id);
     return new Response(JSON.stringify({ ok: true }), {
         status: 200,
         headers: {

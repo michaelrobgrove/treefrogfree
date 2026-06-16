@@ -14,7 +14,7 @@
  *  sensitive secret — leak only via the welcome email.
  */
 
-import { getAccountByEmail, getAccountBySub, type Account, type Session } from "./kv";
+import { getAccountBySub, type Account, type Session } from "./kv";
 
 const COOKIE_NAME = "tfp_sess";
 const SESSION_TTL_SEC = 60 * 60 * 24; // 24h
@@ -137,7 +137,7 @@ export async function getSessionAccount(
         await kv.delete(`session:${token}`);
         return null;
     }
-    const account = await getAccountBySub(kv, session.sub_id);
+    const account = await getAccountBySub(kv, session.order_id);
     if (!account) return null;
     return { account, session };
 }
@@ -146,11 +146,11 @@ export async function getSessionAccount(
  *  and the Set-Cookie header the caller should attach. */
 export async function createSession(
     kv: KVNamespace,
-    subId: string,
+    orderId: string,
 ): Promise<{ token: string; cookie: string }> {
     const token = randomToken(32);
     const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SEC;
-    const session: Session = { sub_id: subId, exp };
+    const session: Session = { order_id: orderId, exp };
     await kv.put(`session:${token}`, JSON.stringify(session), {
         expirationTtl: SESSION_TTL_SEC,
     });

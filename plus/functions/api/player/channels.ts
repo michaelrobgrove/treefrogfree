@@ -6,7 +6,7 @@
  *  the live streams from the panel — the page itself never
  *  sees the password.
  *
- *  The result is cached in KV under `player:channels:{sub_id}`
+ *  The result is cached in KV under `player:channels:{order_id}`
  *  for 5 minutes; the player can re-fetch on open. */
 
 interface PagesContext {
@@ -26,7 +26,7 @@ export const onRequestGet = async (ctx: PagesContext): Promise<Response> => {
         return json({ error: "Account not yet activated" }, 400);
     }
 
-    const cacheKey = `player:channels:${acct.subscription_id}`;
+    const cacheKey = `player:channels:${acct.paypal_order_id}`;
     const cached = await kv.get(cacheKey);
     if (cached) {
         return new Response(cached, {

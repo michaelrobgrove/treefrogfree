@@ -1,12 +1,12 @@
-/** GET /api/checkout/status?sub_id=I-XXXX
+/** GET /api/checkout/status?order_id=O-XXXX
  *
  *  The thanks page polls this every 4 seconds. Returns
  *  `{ ready: true }` once the account exists in KV with
- *  status === "active" (i.e. the ACTIVATED webhook has
- *  fired and the Gold Panel account is ready).
+ *  status === "active" (i.e. the CAPTURE.COMPLETED
+ *  webhook has fired and the Gold Panel account is ready).
  *
  *  We accept an unauthenticated request and just look up by
- *  subscription id. This is fine: the only data returned is
+ *  order id. This is fine: the only data returned is
  *  "ready: true|false". The customer proves their identity
  *  with email + password at the login page. */
 
@@ -17,11 +17,11 @@ interface PagesContext {
 
 export const onRequestGet = async (ctx: PagesContext): Promise<Response> => {
     const url = new URL(ctx.request.url);
-    const subId = url.searchParams.get("sub_id") || "";
-    if (!subId) return json({ ready: false, error: "missing sub_id" });
+    const orderId = url.searchParams.get("order_id") || "";
+    if (!orderId) return json({ ready: false, error: "missing order_id" });
     const kv = ctx.env.PLUS_KV as KVNamespace;
     const { getAccountBySub } = await import("../../_lib/kv");
-    const acct = await getAccountBySub(kv, subId);
+    const acct = await getAccountBySub(kv, orderId);
     return json({
         ready: !!acct && acct.status === "active",
         status: acct?.status || "unknown",
