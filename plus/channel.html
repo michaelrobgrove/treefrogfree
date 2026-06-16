@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Channel — Tree Frog Plus</title>
+    <meta name="description" content="Watch live TV channels with Tree Frog Plus. 10,000+ premium channels with automatic failover.">
+    <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: { frog: '#22c55e' } } }
+        }
+    </script>
+    <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body class="bg-gray-900 text-white min-h-screen antialiased selection:bg-frog selection:text-white">
+    <nav class="border-b border-gray-800 bg-gray-900/80 backdrop-blur-md sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <a href="/" class="flex items-center gap-2 text-gray-300 hover:text-white">
+                <span>←</span><span class="hidden sm:inline">Back</span>
+            </a>
+            <a href="/" class="flex items-center gap-2">
+                <img src="/assets/logo.svg" alt="Tree Frog Plus" class="w-8 h-8"/>
+                <span class="font-bold text-xl tracking-tight">Tree Frog <span class="text-frog">Plus</span></span>
+            </a>
+        </div>
+    </nav>
+
+    <main id="root" class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div class="text-center text-gray-500 py-16">Loading channel…</div>
+    </main>
+
+    <script src="/assets/player.js" defer></script>
+    <script>
+        const params = new URLSearchParams(location.search);
+        const id = parseInt(params.get('id'), 10);
+
+        async function load() {
+            const root = document.getElementById('root');
+            try {
+                const resp = await fetch('/api/player/channels.json', { cache: 'no-cache' });
+                const catalog = await resp.json();
+                const channel = catalog.channels.find(c => c.id === id);
+                if (!channel) {
+                    root.innerHTML = '<div class="text-center text-gray-500 py-16">Channel not found. <a href="/" class="text-frog hover:underline">Back to home</a></div>';
+                    return;
+                }
+                document.title = `${channel.name} — Tree Frog Plus`;
+                const m3u = `/playlist.m3u`;
+                const canWatch = !!channel.token;
+                root.innerHTML = `
+                    <div class="bg-gray-800 border border-gray-700 rounded-2xl overflow-hidden">
+                        <div class="aspect-video bg-gray-900 flex items-center justify-center">
+                            ${channel.logo
+                                ? `<img src="${channel.logo}" alt="" class="max-h-full max-w-full object-contain" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'text-6xl',textContent:'📺'}))">`
+                                : '<div class="text-6xl">📺</div>'}
+                        </div>
+                        <div class="p-6">
+                            <h1 class="text-3xl font-bold mb-2">${channel.name}</h1>
+                            <div class="flex flex-wrap items-center gap-3 text-sm text-gray-400 mb-4">
+                                <span>${channel.category}</span>
+                                <span>·</span>
+                                <span class="flex items-center gap-1">
+                                    <span class="w-2 h-2 rounded-full ${channel.availability_pct >= 95 ? 'bg-green-500' : channel.availability_pct >= 80 ? 'bg-yellow-500' : 'bg-red-500'}"></span>
+                                    ${channel.availability_pct.toFixed(1)}% uptime
+                                </span>
+                                ${channel.tvg_id ? `<span>·</span><span>tvg-id: <code class="text-xs bg-gray-900 px-2 py-0.5 rounded">${channel.tvg_id}</code></span>` : ''}
+                            </div>
+                            <div class="flex flex-wrap gap-3 mt-6">
+                                <button id="btn-watch" type="button"${canWatch ? '' : ' disabled'}
+                                        class="bg-frog hover:bg-green-500 text-gray-900 font-semibold px-5 py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                    ${canWatch ? '▶ Watch now' : 'Stream offline'}
+                                </button>
+                                <a href="${m3u}" class="bg-gray-700 hover:bg-gray-600 text-white font-medium px-5 py-3 rounded-lg transition-colors">
+                                    📥 Download playlist
+                                </a>
+                                <a href="/setup.html" class="bg-gray-700 hover:bg-gray-600 text-white font-medium px-5 py-3 rounded-lg transition-colors">
+                                    Setup guide
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-8 bg-gray-800/50 border border-gray-700 rounded-xl p-6 text-sm text-gray-300">
+                        <h3 class="font-semibold mb-2">How to watch</h3>
+                        <ol class="list-decimal pl-5 space-y-1 text-gray-400">
+                            <li>Download the playlist above.</li>
+                            <li>Open your IPTV player (TiviMate, IPTV Smarters, Onn boxes, etc.).</li>
+                            <li>Add the playlist as an M3U URL — point it at the local file you downloaded.</li>
+                        </ol>
+                    </div>
+                `;
+            } catch (e) {
+                root.innerHTML = '<div class="text-center text-red-400 py-16">Failed to load channel info.</div>';
+            }
+        }
+
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('#btn-watch');
+            if (!btn) return;
+            if (btn.disabled) return;
+            const id = parseInt(new URL(location.href).searchParams.get('id'), 10);
+            fetch('/api/player/channels.json', { cache: 'no-cache' })
+                .then((r) => r.json())
+                .then((cat) => {
+                    const ch = cat.channels.find((c) => c.id === id);
+                    if (!ch) return;
+                    if (!ch.token || !window.TreefrogPlayer) {
+                        btn.disabled = true;
+                        btn.textContent = 'Player unavailable';
+                        return;
+                    }
+                    window.TreefrogPlayer.open(ch);
+                })
+                .catch((err) => {
+                    console.error('watch click failed', err);
+                    btn.disabled = true;
+                    btn.textContent = 'Player unavailable';
+                });
+        });
+
+        load();
+    </script>
+</body>
+</html>

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Playlist & Setup — Tree Frog Plus</title>
+    <meta name="description" content="Download your playlist.m3u file and set up Tree Frog Plus on any IPTV player.">
+    <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>tailwind.config = { darkMode: 'class', theme: { extend: { colors: { frog: '#22c55e' } } } }</script>
+    <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body class="bg-gray-900 text-white min-h-screen antialiased selection:bg-frog selection:text-white">
+    <nav class="border-b border-gray-800 bg-gray-900/80 backdrop-blur-md sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <a href="/" class="flex items-center gap-2 text-gray-300 hover:text-white">
+                <span>←</span><span class="hidden sm:inline">Back</span>
+            </a>
+            <a href="/" class="flex items-center gap-2">
+                <img src="/assets/logo.svg" alt="Tree Frog Plus" class="w-8 h-8"/>
+                <span class="font-bold text-xl tracking-tight">Tree Frog <span class="text-frog">Plus</span></span>
+            </a>
+        </div>
+    </nav>
+
+    <main class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <h1 class="text-4xl font-bold mb-3">Get the playlist</h1>
+        <p class="text-gray-400 mb-8">One M3U file works in every IPTV player.</p>
+
+        <div class="bg-frog/10 border border-frog/30 rounded-2xl p-6 mb-10 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+            <div class="flex-1">
+                <div class="font-semibold text-lg">playlist.m3u</div>
+                <div class="text-sm text-gray-400">Updated every 30 minutes with the latest working streams.</div>
+            </div>
+            <a href="/playlist.m3u" class="bg-frog hover:bg-green-500 text-gray-900 font-semibold px-5 py-3 rounded-lg transition-colors whitespace-nowrap">
+                📥 Download M3U
+            </a>
+        </div>
+
+        <h2 class="text-2xl font-bold mb-4">Setup guide</h2>
+        <div class="space-y-4">
+            <details class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+                <summary class="font-semibold cursor-pointer">📺 TiviMate (Android / Fire TV)</summary>
+                <ol class="list-decimal pl-6 mt-3 space-y-1 text-gray-300 text-sm">
+                    <li>Download <code class="text-frog">playlist.m3u</code> from the button above.</li>
+                    <li>Open TiviMate → <strong>Add playlist</strong> → <strong>M3U URL</strong>.</li>
+                    <li>Enter a name (e.g., "Tree Frog").</li>
+                    <li>For the URL, enter the path to the downloaded file, or upload it to a cloud drive and paste the public link.</li>
+                </ol>
+            </details>
+            <details class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+                <summary class="font-semibold cursor-pointer">📱 IPTV Smarters (iOS / Android)</summary>
+                <ol class="list-decimal pl-6 mt-3 space-y-1 text-gray-300 text-sm">
+                    <li>Download <code class="text-frog">playlist.m3u</code>.</li>
+                    <li>Open IPTV Smarters → <strong>Add User</strong> → <strong>Login with M3U URL</strong>.</li>
+                    <li>Provide any username/password (it's ignored) and paste the URL to the playlist.</li>
+                </ol>
+            </details>
+            <details class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+                <summary class="font-semibold cursor-pointer">🖥️ VLC / Kodi / desktop players</summary>
+                <ol class="list-decimal pl-6 mt-3 space-y-1 text-gray-300 text-sm">
+                    <li>Download <code class="text-frog">playlist.m3u</code>.</li>
+                    <li>VLC: <strong>Media → Open File…</strong>. Kodi: <strong>PVR IPTV Simple Client</strong> add-on.</li>
+                </ol>
+            </details>
+        </div>
+
+        <div class="mt-12 bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-2xl p-8 text-center">
+            <div class="text-3xl mb-2">🌟</div>
+            <h3 class="text-2xl font-bold mb-2">Want more channels?</h3>
+            <p class="text-gray-400 mb-4">Tree Frog Plus adds hundreds more, with better reliability, premium EPG, and request features.</p>
+            <a href="/" class="inline-block bg-frog hover:bg-green-500 text-gray-900 font-semibold px-6 py-3 rounded-lg transition-colors">
+                Visit TFPlus.stream →
+            </a>
+        </div>
+    </main>
+
+    <footer class="border-t border-gray-800 mt-16">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-sm text-gray-500 flex flex-col md:flex-row items-center justify-between gap-3">
+            <div>&copy; Tree Frog Plus.</div>
+            <div class="flex items-center gap-4">
+                <a href="https://free.tfplus.stream" class="hover:text-white transition-colors">Free Site</a>
+                <a href="login.html" class="hover:text-white transition-colors">Sign in</a>
+                <a href="pricing.html" class="hover:text-white transition-colors">Pricing</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

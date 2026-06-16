@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tree Frog Plus Admin</title>
+    <meta name="description" content="Admin dashboard for Tree Frog Plus - manage channels, imports, and monitor service health.">
+    <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>tailwind.config = { darkMode: 'class', theme: { extend: { colors: { frog: '#22c55e' } } } }</script>
+    <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body class="bg-gray-900 text-white min-h-screen antialiased">
+    <nav class="border-b border-gray-800 bg-gray-900/80 backdrop-blur-md sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <span class="text-2xl">🐸</span>
+                <span class="font-bold text-xl">Tree Frog <span class="text-frog">Plus Admin</span></span>
+            </div>
+            <div class="text-sm text-gray-400" id="last-check">—</div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-10">
+
+        <!-- Stats -->
+        <section class="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+                <div class="text-2xl font-bold text-frog" id="s-online">—</div>
+                <div class="text-xs text-gray-400">Online channels</div>
+            </div>
+            <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+                <div class="text-2xl font-bold text-yellow-400" id="s-offline">—</div>
+                <div class="text-xs text-gray-400">Offline channels</div>
+            </div>
+            <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+                <div class="text-2xl font-bold text-green-400" id="s-streams-on">—</div>
+                <div class="text-xs text-gray-400">Online streams</div>
+            </div>
+            <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+                <div class="text-2xl font-bold text-red-400" id="s-streams-off">—</div>
+                <div class="text-xs text-gray-400">Offline streams</div>
+            </div>
+            <div class="bg-gray-800 border border-gray-700 rounded-xl p-4">
+                <div class="text-2xl font-bold text-gray-400" id="s-disabled">—</div>
+                <div class="text-xs text-gray-400">Disabled streams</div>
+            </div>
+        </section>
+
+        <!-- Import -->
+        <section class="bg-gray-800 border border-gray-700 rounded-2xl p-6">
+            <h2 class="text-xl font-bold mb-4">📥 Import M3U</h2>
+            <div class="flex flex-col sm:flex-row gap-3">
+                <input id="m3u-url" type="url" placeholder="https://provider.com/list.m3u"
+                       class="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-frog">
+                <input id="m3u-label" type="text" placeholder="Source label (optional)"
+                       class="sm:w-56 bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-frog">
+                <button id="btn-import" class="bg-frog hover:bg-green-500 text-gray-900 font-semibold px-5 py-3 rounded-lg transition-colors whitespace-nowrap">
+                    Import
+                </button>
+            </div>
+            <pre id="import-result" class="hidden mt-4 bg-gray-900 text-xs text-gray-300 p-3 rounded-lg overflow-x-auto"></pre>
+        </section>
+
+        <!-- Actions -->
+        <section class="bg-gray-800 border border-gray-700 rounded-2xl p-6">
+            <h2 class="text-xl font-bold mb-4">⚙️ Actions</h2>
+            <div class="flex flex-wrap gap-3">
+                <button data-action="check-once" class="btn-action bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm">Run health check now</button>
+                <button data-action="publish" class="btn-action bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm">Republish playlist + catalog</button>
+                <button data-action="rebuild-kv" class="btn-action bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded-lg text-sm">Rebuild Cloudflare KV</button>
+            </div>
+            <pre id="action-result" class="hidden mt-4 bg-gray-900 text-xs text-gray-300 p-3 rounded-lg overflow-x-auto"></pre>
+        </section>
+
+        <!-- Dead streams -->
+        <section class="bg-gray-800 border border-gray-700 rounded-2xl p-6">
+            <h2 class="text-xl font-bold mb-4">💀 Dead streams</h2>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead class="text-left text-gray-400 text-xs uppercase">
+                        <tr>
+                            <th class="py-2">Channel</th>
+                            <th>Offline since</th>
+                            <th>Last error</th>
+                            <th>URL</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dead-tbody" class="divide-y divide-gray-700">
+                        <tr><td colspan="4" class="py-4 text-center text-gray-500">Loading…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        // Same-origin: the engine serves this HTML at /admin and the
+        // /api/admin/* endpoints are on the same origin. The bearer
+        // token is injected server-side by the engine via a <meta> tag
+        // so the UI doesn't need a login prompt.
+        const ENGINE_API = (document.querySelector('meta[name="engine-api"]')?.content) || '';
+        const ADMIN_TOKEN = (document.querySelector('meta[name="admin-token"]')?.content) || '';
+
+        async function api(path, opts = {}) {
+            const resp = await fetch(ENGINE_API + path, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(ADMIN_TOKEN ? { 'Authorization': 'Bearer ' + ADMIN_TOKEN } : {}),
+                    ...(opts.headers || {}),
+                },
+                ...opts,
+            });
+            if (!resp.ok) throw new Error(`API ${resp.status}: ${await resp.text()}`);
+            return resp.json();
+        }
+
+        async function loadStats() {
+            try {
+                const stats = await api('/api/admin/stats');
+                document.getElementById('s-online').textContent = stats.online_channels;
+                document.getElementById('s-offline').textContent = stats.offline_channels;
+                document.getElementById('s-streams-on').textContent = stats.online_streams;
+                document.getElementById('s-streams-off').textContent = stats.offline_streams;
+                document.getElementById('s-disabled').textContent = stats.disabled_streams;
+                if (stats.last_check) {
+                    document.getElementById('last-check').textContent = `Last check: ${stats.last_check}`;
+                }
+            } catch (e) { console.error(e); }
+        }
+
+        async function loadDeadStreams() {
+            const tbody = document.getElementById('dead-tbody');
+            try {
+                const rows = await api('/api/admin/dead-streams');
+                if (rows.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" class="py-4 text-center text-gray-500">No dead streams. Nice.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = rows.map(r => `
+                    <tr>
+                        <td class="py-2 font-semibold">${escapeHtml(r.display_name)}</td>
+                        <td>${r.offline_since ?? '—'}</td>
+                        <td class="text-red-300 text-xs">${escapeHtml(r.last_error ?? '—')}</td>
+                        <td class="text-xs text-gray-500 truncate max-w-xs" title="${escapeAttr(r.source_url)}">${escapeHtml(r.source_url)}</td>
+                    </tr>
+                `).join('');
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="4" class="py-4 text-center text-red-400">Failed to load: ${e.message}</td></tr>`;
+            }
+        }
+
+        document.getElementById('btn-import').addEventListener('click', async () => {
+            const url = document.getElementById('m3u-url').value.trim();
+            const label = document.getElementById('m3u-label').value.trim() || null;
+            if (!url) return alert('Enter an M3U URL');
+            const result = document.getElementById('import-result');
+            result.classList.remove('hidden');
+            result.textContent = 'Importing…';
+            try {
+                const r = await api('/api/admin/import', { method: 'POST', body: JSON.stringify({ url, label }) });
+                result.textContent = JSON.stringify(r, null, 2);
+                loadStats();
+            } catch (e) {
+                result.textContent = 'Error: ' + e.message;
+            }
+        });
+
+        document.querySelectorAll('.btn-action').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const action = btn.dataset.action;
+                const result = document.getElementById('action-result');
+                result.classList.remove('hidden');
+                result.textContent = `Running ${action}…`;
+                try {
+                    const r = await api(`/api/admin/${action}`, { method: 'POST' });
+                    result.textContent = JSON.stringify(r, null, 2);
+                    loadStats();
+                    loadDeadStreams();
+                } catch (e) {
+                    result.textContent = 'Error: ' + e.message;
+                }
+            });
+        });
+
+        function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&','<':'<','>':'>','"':'"',"'":'''}[c])); }
+        function escapeAttr(s) { return escapeHtml(s); }
+
+        loadStats();
+        loadDeadStreams();
+        setInterval(loadStats, 30000);
+    </script>
+</body>
+</html>
