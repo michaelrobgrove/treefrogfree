@@ -11,7 +11,17 @@
  *  status, expires_at, days_until_expiry, last login
  *  timestamp, last PayPal charge timestamp + derived
  *  "next charge" date, panel login (username + password),
- *  DNS endpoints, and the pending_renewal pointer if any. */
+ *  DNS endpoints, pending_renewal pointer, and a
+ *  `is_custom_bouquet` flag that drives the renew-menu
+ *  show/hide on the dashboard.
+ *
+ *  Bouquet matching: site-signup customers have a standard
+ *  bouquet (one of our 4) and can self-renew. GP-only
+ *  customers default to a "custom" bouquet since the Gold
+ *  Panel device_info API doesn't expose the line's
+ *  bouquet id, and the operator has to set it by hand
+ *  (or via a future admin endpoint) before self-serve
+ *  renewal unlocks. */
 
 interface PagesContext {
     request: Request;
@@ -23,7 +33,11 @@ export const onRequestGet = async (ctx: PagesContext): Promise<Response> => {
     const { getSessionAccount } = await import("../../_lib/session");
     const { decryptPanelPassword } = await import("../../_lib/kv");
     const plans = await import("../../_lib/plans");
-    const BOUQUET_LABELS = plans.BOUQUET_LABELS;
+    const {
+        BOUQUET_LABELS,
+        isStandardBouquet,
+        bouquetDisplayLabel,
+    } = plans;
 
     const sess = await getSessionAccount(ctx.request, kv);
     if (!sess) return json({ error: "Not signed in" }, 401);
@@ -58,14 +72,32 @@ export const onRequestGet = async (ctx: PagesContext): Promise<Response> => {
         }
     }
 
+    // Resolve the bouquet. Site-signup customers are always
+    // on a standard bouquet (one of our 4). GP-only
+    // customers default to "us_wo" at first sign-in; if
+    // their actual line is on a different / non-standard
+    // bouquet, the operator must set acct.bouquet and
+    // acct.panel_bouquet_id in KV. Until then, we treat the
+    // account as "custom" and the dashboard hides the
+    // self-serve renew menu.
+    const isCustom = !isStandardBouquet(acct.bouquet) || !acct.panel_bouquet_id;
+    const bouquetKey: string = isCustom ? "custom" : acct.bouquet;
+    const bouquetLabel = isCustom
+        ? bouquetDisplayLabel("custom", acct.panel_bouquet_id || null)
+        : BOUQUET_LABELS[acct.bouquet];
+    const canSelfRenew = !isCustom && acct.status !== "refunded" && acct.status !== "expired";
+
     return json({
         name: acct.name || "",
         email: acct.email || "",
         contact: acct.contact || { discord: null, telegram: null, reddit: null },
         paypal_order_id: acct.paypal_order_id,
         plan_months: acct.plan_months,
-        bouquet: acct.bouquet,
-        bouquet_label: BOUQUET_LABELS[acct.bouquet] || acct.bouquet,
+        bouquet: bouquetKey,
+        bouquet_label: bouquetLabel,
+        panel_bouquet_id: acct.panel_bouquet_id || null,
+        is_custom_bouquet: isCustom,
+        can_self_renew: canSelfRenew,
         status: acct.status,
         cancel_at_period_end: acct.cancel_at_period_end,
         created_at: acct.created_at,

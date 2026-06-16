@@ -91,6 +91,7 @@ function escapeHtml(s: string): string {
 }
 
 export function welcomeEmail(opts: {
+    name: string;
     email: string;
     username: string;
     password: string;
@@ -101,19 +102,19 @@ export function welcomeEmail(opts: {
 }): { subject: string; html: string; text: string } {
     const subject = "Your Tree Frog Plus account is ready";
     const html = layout(`
-        <h2 style="margin:0 0 12px;font-size:20px;">Welcome aboard.</h2>
+        <h2 style="margin:0 0 12px;font-size:20px;">Welcome aboard${opts.name ? ", " + escapeHtml(opts.name.split(" ")[0]) : ""}.</h2>
         <p style="margin:0 0 16px;color:#cbd5e1;">
-          Your subscription is active. Sign in to the dashboard with the
-          credentials below and follow the setup guide to start watching.
+          Your subscription is active. Your login is the same for the dashboard
+          and your IPTV app &mdash; keep this email handy.
         </p>
 
-        <h3 style="margin:24px 0 8px;font-size:14px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;">Sign in</h3>
+        <h3 style="margin:24px 0 8px;font-size:14px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;">Login (dashboard &amp; IPTV apps)</h3>
         <table style="width:100%;border-collapse:collapse;">
-          ${credRow("Email", opts.email)}
+          ${credRow("Username", opts.username)}
           ${credRow("Password", opts.password)}
         </table>
 
-        <h3 style="margin:24px 0 8px;font-size:14px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;">Xtream Codes (IPTV apps)</h3>
+        <h3 style="margin:24px 0 8px;font-size:14px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;">Xtream Codes (use in IPTV Smarters, TiviMate, etc.)</h3>
         <table style="width:100%;border-collapse:collapse;">
           ${credRow("Server", opts.xc_server)}
           ${credRow("Username", opts.username)}
@@ -134,15 +135,15 @@ export function welcomeEmail(opts: {
         </div>
 
         <p style="margin:24px 0 0;color:#94a3b8;font-size:12px;">
-          If you didn't subscribe, reply to this email and we'll sort it out.
+          Lost your password? Reply to this email and we'll help you reset it.
         </p>
     `);
-    const text = `Welcome to Tree Frog Plus.
+    const text = `Welcome to Tree Frog Plus${opts.name ? ", " + opts.name.split(" ")[0] : ""}.
 
-Your subscription is active. Sign in to the dashboard and follow the setup guide to start watching.
+Your subscription is active. Your login is the same for the dashboard and your IPTV app — keep this email handy.
 
-Sign in
-  Email:    ${opts.email}
+Login (dashboard & IPTV apps)
+  Username: ${opts.username}
   Password: ${opts.password}
 
 Xtream Codes (use in IPTV Smarters, TiviMate, etc.)
@@ -155,6 +156,8 @@ DNS endpoints
   Failover: ${opts.dns_secondary}
 
 Setup guide: ${opts.setup_url}
+
+Lost your password? Reply to this email and we'll help you reset it.
 `;
     return { subject, html, text };
 }
@@ -249,4 +252,95 @@ Pay: ${opts.payment_url}
 Or open your dashboard: ${opts.dashboard_url}
 `;
     return { subject, html, text };
+}
+
+/** Operator notification when a customer on a custom (non-
+ *  standard) Gold Panel bouquet asks to renew. The customer
+ *  can't self-serve these — the operator has to look up
+ *  their line in the panel admin, quote a price, and email
+ *  a payment link. Sent to admin@tfplus.stream (configurable
+ *  via the ADMIN_EMAIL env var, with a hardcoded fallback
+ *  for the operator's primary admin address). */
+export function customRenewalRequestEmail(opts: {
+    account_paypal_order_id: string;
+    customer_email: string;
+    customer_name: string;
+    panel_username: string;
+    panel_user_id: string;
+    panel_bouquet_id: string;
+    expires_at: string | null;
+    message: string;
+    dashboard_url: string;
+}): { subject: string; html: string; text: string } {
+    const subject = `Custom-bouquet renewal request from ${opts.customer_email}`;
+    const safeMsg = escapeHtml(opts.message || "(no message)");
+    const html = layout(`
+        <h2 style="margin:0 0 12px;font-size:20px;">Custom-bouquet renewal request</h2>
+        <p style="margin:0 0 16px;color:#cbd5e1;">
+          A customer on a non-standard Gold Panel bouquet clicked
+          "Contact support to renew" on the dashboard. They cannot
+          self-serve renewals; you need to look up their line and
+          email a payment link manually.
+        </p>
+
+        <h3 style="margin:24px 0 8px;font-size:14px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;">Customer</h3>
+        <table style="width:100%;border-collapse:collapse;">
+          ${credRow("Name", opts.customer_name || "(not provided)")}
+          ${credRow("Email", opts.customer_email || "(not provided)")}
+          ${credRow("Site account", opts.account_paypal_order_id)}
+        </table>
+
+        <h3 style="margin:24px 0 8px;font-size:14px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;">Gold Panel line</h3>
+        <table style="width:100%;border-collapse:collapse;">
+          ${credRow("Username", opts.panel_username)}
+          ${credRow("User ID", opts.panel_user_id || "(unknown)")}
+          ${credRow("Bouquet ID (custom)", opts.panel_bouquet_id || "(unknown)")}
+          ${credRow("Expires", opts.expires_at || "(unknown)")}
+        </table>
+
+        <h3 style="margin:24px 0 8px;font-size:14px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.05em;">Message from customer</h3>
+        <div style="background:#0f172a;border-left:3px solid #22c55e;padding:12px 16px;border-radius:4px;color:#cbd5e1;white-space:pre-wrap;">${safeMsg}</div>
+
+        <div style="text-align:center;margin:28px 0 8px;">
+          <a href="${escapeHtml(opts.dashboard_url)}"
+             style="display:inline-block;background:#22c55e;color:#111827;font-weight:600;text-decoration:none;padding:12px 24px;border-radius:8px;">
+            Open dashboard
+          </a>
+        </div>
+
+        <p style="margin:24px 0 0;color:#94a3b8;font-size:12px;">
+          To email the customer a renewal payment link, run <code style="color:#22c55e;">POST /api/account/renew</code> from the
+          operator tooling, or use the dashboard's "Generate renewal link" action once
+          the bouquet has been updated to a standard one.
+        </p>
+    `);
+    const text = `Custom-bouquet renewal request
+
+Customer
+  Name:   ${opts.customer_name || "(not provided)"}
+  Email:  ${opts.customer_email || "(not provided)"}
+  Site:   ${opts.account_paypal_order_id}
+
+Gold Panel line
+  Username:  ${opts.panel_username}
+  User ID:   ${opts.panel_user_id || "(unknown)"}
+  Bouquet:   ${opts.panel_bouquet_id || "(unknown)"}
+  Expires:   ${opts.expires_at || "(unknown)"}
+
+Message
+${opts.message || "(no message)"}
+
+Open the dashboard: ${opts.dashboard_url}
+`;
+    return { subject, html, text };
+}
+
+/** Returns the operator's admin email for "contact support
+ *  to renew" submissions and similar operator-bound
+ *  notifications. Configurable via the ADMIN_EMAIL env var;
+ *  defaults to admin@tfplus.stream. */
+export function adminAddress(): string {
+    const v = (globalThis as any).ADMIN_EMAIL;
+    if (typeof v === "string" && v) return v;
+    return "admin@tfplus.stream";
 }

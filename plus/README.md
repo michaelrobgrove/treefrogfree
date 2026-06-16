@@ -7,11 +7,21 @@ should never see "Strong8K" or "Gold Panel" anywhere.
 Orders (one-time payments) + Gold Panel reseller API + Resend
 (email).
 
-**Billing model:** Customers pay once for a chosen term (3, 6,
-or 12 months). PayPal does NOT auto-bill. The site generates
+**Billing model:** Customers pay once for a chosen term (1, 3,
+6, or 12 months). PayPal does NOT auto-bill. The site generates
 a fresh PayPal Order (payment link) whenever a renewal is
 needed — the customer can trigger this from the dashboard or
 the operator can email them one.
+
+**Auth model:** The site signs customers in with their **Gold
+Panel username + password** — the same credentials they use in
+their IPTV app. New customers get a Gold Panel account created
+on first payment; the welcome email contains the username and
+password, and those creds double as their site login. Existing
+Gold Panel customers can sign in immediately with the creds
+they already have — no PayPal history required; the site
+verifies them against Gold Panel's `device_info` endpoint on
+first login and creates a local record on the fly.
 
 ---
 
@@ -20,10 +30,10 @@ the operator can email them one.
 ```
 plus/
 ├── index.html              # Landing
-├── pricing.html            # 3 plans × 4 bouquets
+├── pricing.html            # 4 plans × 4 bouquets + signup form
 ├── setup.html              # Android / Fire Stick / Roku
-├── login.html              # Site sign-in
-├── dashboard.html          # Account mgmt
+├── login.html              # Site sign-in (Gold Panel creds)
+├── dashboard.html          # Account mgmt + profile editor
 ├── thanks.html             # Polls for activation
 ├── assets/                 # CSS, JS, logo
 ├── functions/
@@ -34,36 +44,47 @@ plus/
 
 ---
 
+## Plans and bouquets
+
+Pricing is a 4×4 matrix: 4 plan lengths × 4 bouquets.
+
+| Months | Price | Per month |
+| ------ | ----- | --------- |
+| 1      | $15   | $15       |
+| 3      | $36   | $12       |
+| 6      | $60   | $10       |
+| 12     | $96   | $8        |
+
+Bouquets (all pre-created in the operator's Gold Panel):
+
+| Key      | Label          | Gold Panel ID |
+| -------- | -------------- | ------------- |
+| `us_wo`  | US             | 66496         |
+| `us_w`   | US + Adult     | 67000         |
+| `ca_wo`  | Canada         | 67006         |
+| `ca_w`   | Canada + Adult | 67007         |
+
+Prices and bouquet IDs live in `functions/_lib/plans.ts`.
+Hard-coded fallbacks matching the operator's Gold Panel are
+already there; the Cloudflare env vars `BOUQUET_US_WO`,
+`BOUQUET_US_W`, `BOUQUET_CA_WO`, `BOUQUET_CA_W` override
+them at runtime.
+
+---
+
 ## Setup checklist (operator)
 
 ### 1. One-time: gold panel bouquets
 
-In the Gold Panel admin, create 4 bouquets:
-
-- `US`
-- `US + Adult`
-- `Canada`
-- `Canada + Adult`
-
-Then list them:
+The 4 bouquet IDs above are already wired in. If the operator
+ever renames or recreates them, list the new ones with:
 
 ```
 curl 'https://8k.cms-only.ru/api/api.php?action=bouquet&api_key=YOUR_KEY'
 ```
 
-Copy the numeric `id` for each into `plus/wrangler.toml` (or
-set as Cloudflare env vars):
-
-```
-BOUQUET_US_WO  = "66496"
-BOUQUET_US_W   = "67000"
-BOUQUET_CA_WO  = "67006"
-BOUQUET_CA_W   = "67007"
-```
-
-Hard-coded fallbacks matching the operator's Gold Panel are
-already in `functions/_lib/plans.ts`, so this step is only
-required if those IDs change.
+…and update `functions/_lib/plans.ts` (or set the
+`BOUQUET_*` env vars).
 
 ### 2. Cloudflare setup
 
@@ -153,26 +174,60 @@ wrangler pages deploy . --branch beta --project-name treefrogplus
 
 ## Flow
 
-### Initial checkout
+### Initial checkout (new customer)
 
-1. Customer picks plan + bouquet on `pricing.html`.
-2. `POST /api/checkout` creates a PayPal Order with the
-   price from `plans.ts` and `purchase_units[0].custom_id =
-   "{months}|{bouquet}"`; returns the approval URL.
+1. Customer visits `pricing.html`, picks a plan + bouquet, and
+   fills in the **Your details** form: name (required), email
+   (required), and any of discord / telegram / reddit
+   usernames (optional — these are stored on the account and
+   may be used for account-update notifications, future
+   community channels, etc.).
+2. `POST /api/checkout` validates the form (name non-empty,
+   valid email, no existing active account with that email),
+   creates a PayPal Order with the price from `plans.ts` and
+   `purchase_units[0].custom_id = "{months}|{bouquet}"`, and
+   stashes the form fields at `checkout:pending:{order_id}`
+   in KV. Returns the approval URL.
 3. Customer approves on PayPal → PayPal sends
    `CHECKOUT.ORDER.APPROVED`. We capture server-side.
-4. `PAYMENT.CAPTURE.COMPLETED` arrives. We call Gold Panel
-   `action=new&type=m3u&sub=N&pack=<bouquet_id>&...`, store
-   the username + password in KV, and email the customer.
+4. `PAYMENT.CAPTURE.COMPLETED` arrives. The webhook reads the
+   form fields from `checkout:pending:{order_id}`, calls Gold
+   Panel `action=new&type=m3u&sub=N&pack=<bouquet_id>&...`,
+   stores the Gold Panel `username` + `password` on the
+   account (and a local PBKDF2 hash of that password for
+   site login), drops the pending-intent KV key, and emails
+   the customer their credentials.
 5. `thanks.html` polls `/api/checkout/status?order_id=...`
    and redirects to login once the account is ready.
-6. Customer signs in with their email + the password from
-   the welcome email → dashboard shows status, DNS, Xtream
-   Codes block, and the "Open web player" button.
+6. Customer signs in on `login.html` with their Gold Panel
+   username + password (the same creds in the welcome email
+   and the same creds they use in TiviMate / Sparkle / etc.)
+   → `dashboard.html` shows status, DNS, Xtream Codes block,
+   and the "Open web player" button.
 7. Web player fetches `/api/player/channels` (proxied
    through Gold Panel XC), shows the list, plays the chosen
    channel via HLS.js with apex (HTTPS) and comet (HTTP) as
    failover.
+
+### Initial sign-in (existing Gold Panel customer)
+
+1. The customer already has Gold Panel creds from a previous
+   purchase (operator, retail, etc.). They go to
+   `login.html` and enter the same username + password.
+2. `POST /api/auth/login` first checks the local
+   `password_auth` PBKDF2 hash. On a miss, it falls back to
+   Gold Panel `action=device_info&username=...&password=...`.
+3. If Gold Panel returns a matching line, the site creates a
+   local account record on the fly with a synthetic order ID
+   of `GP-{panel_user_id}` (no PayPal history), stores the
+   panel creds and a fresh hash, mints a session cookie, and
+   redirects to the dashboard. The customer is now a fully
+   provisioned site user.
+4. From the dashboard, they can edit their name / email /
+   contact handles, view the XC login info for their IPTV
+   app, and (if their Gold Panel line is nearing expiry) hit
+   "Extend +N months" to pay a fresh one-time renewal via
+   PayPal.
 
 ### Renewal
 
@@ -188,6 +243,22 @@ wrangler pages deploy . --branch beta --project-name treefrogplus
    Panel `action=renew`, updates `expires_at`, clears the
    pending pointer, sends renewal receipt.
 5. Dashboard re-renders with the new expiry.
+
+### Profile edit
+
+From the dashboard, the customer can hit **Edit** in the
+account block to update:
+
+- `name` (required, 1–100 chars)
+- `email` (required, valid format, unique among active
+  accounts — the lookup index at `account:by_email:*` is
+  updated in place)
+- `discord` / `telegram` / `reddit` (optional, each ≤ 64
+  chars; empty string clears it)
+
+Submitted via `PUT /api/account/contact` (POST also
+accepted). The Gold Panel creds, plan, bouquet, and
+billing state are never touched by this endpoint.
 
 ### Cancellation
 
@@ -217,13 +288,11 @@ shut the line off.
   `device_info` calls are impossible), but the webhook
   handler logs the full payload and fails loudly if they're
   missing. Verify on the first real account creation.
-- **Password reset flow.** Not implemented in v1. Customer
-  replies to the welcome email and we reset manually.
-- **Site password change.** Not implemented in v1. The
-  password in the welcome email is the customer's site
-  password for life, unless we change it for them.
-- **TiviMate premium APK.** Setup page has a "coming soon"
-  card. Not implemented.
+- **Password reset flow.** Not implemented in v1. Because
+  the site password IS the Gold Panel password, a reset
+  means regenerating the Gold Panel line — which we don't
+  support programmatically. Customer replies to the welcome
+  email and the operator resets manually.
 - **Auto-disable of expired lines.** No cron yet. The
   dashboard flags `cancel_at_period_end` accounts, but the
   Gold Panel line stays live until the operator (or a
@@ -234,3 +303,9 @@ shut the line off.
   email a renewal link via `POST /api/account/renew` from
   the dashboard; an automated "your plan expires in 7 days,
   here's a one-click link" cron is a future nice-to-have.
+- **TiviMate/Sparkle disclaimer.** The setup page notes
+  that any payment required by TiviMate or Sparkle is from
+  the developers of those apps, not Tree Frog Plus. The
+  host's own unlocked APK (downloader code `4527163`) is
+  hosted on Google Drive; that URL and the
+  "free for subscribers" framing are baked into setup.html.

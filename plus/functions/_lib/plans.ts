@@ -6,9 +6,19 @@
  *   ca_wo  = Canada, no adult
  *   ca_w   = Canada, with adult
  *
- * Pricing is per plan length (3, 6, 12 months) and is the SAME
- * for all bouquets. The bouquet just controls which package
- * is provisioned in the Gold Panel.
+ * Pricing is per plan length (1, 3, 6, 12 months) and is the
+ * SAME for all bouquets. The bouquet just controls which
+ * package is provisioned in the Gold Panel.
+ *
+ *  Plan months   Total   /mo
+ *    1            $15    $15
+ *    3            $36    $12
+ *    6            $60    $10
+ *   12            $96    $8
+ *
+ * Renewals charge the same total (no "month-to-month premium")
+ * — the renewal menu is just "buy another 1 / 3 / 6 / 12 month
+ * plan".
  *
  * Gold Panel bouquet IDs come from the `action=bouquet`
  * response. They're baked in via env vars
@@ -26,7 +36,7 @@
  * The price is taken from PLAN_PRICES below.
  */
 
-export type PlanMonths = 3 | 6 | 12;
+export type PlanMonths = 1 | 3 | 6 | 12;
 export type BouquetId = "us_wo" | "us_w" | "ca_wo" | "ca_w";
 
 export const BOUQUET_IDS: BouquetId[] = ["us_wo", "us_w", "ca_wo", "ca_w"];
@@ -37,6 +47,27 @@ export const BOUQUET_LABELS: Record<BouquetId, string> = {
     "ca_wo": "Canada",
     "ca_w":  "Canada + Adult",
 };
+
+/** Per-month rate, used in UI badges like "$12 / month". */
+export const PLAN_PER_MONTH: Record<PlanMonths, number> = {
+    1:  15,
+    3:  12,
+    6:  10,
+    12:  8,
+};
+
+/** Total price, used in checkout/renewal Orders and the
+ *  pricing-page hero numbers. */
+export const PLAN_PRICES: Record<PlanMonths, number> = {
+    1:  15,
+    3:  36,
+    6:  60,
+    12: 96,
+};
+
+export function priceFor(months: PlanMonths): number {
+    return PLAN_PRICES[months];
+}
 
 /** Map the user's bouquet selection to the Gold Panel numeric
  *  bouquet id. Hard-coded defaults match the operator's panel;
@@ -55,25 +86,36 @@ export function bouquetToPanelId(bouquet: BouquetId): string {
     return fallback[bouquet];
 }
 
-export const PLAN_PRICES: Record<PlanMonths, number> = {
-    3:  36,
-    6:  60,
-    12: 120,
-};
-
-export function priceFor(months: PlanMonths): number {
-    return PLAN_PRICES[months];
+/** Reverse lookup: given a Gold Panel numeric bouquet id,
+ *  return our internal BouquetId — or null if it doesn't
+ *  match one of the 4 we know about. Returns null for any
+ *  custom/unknown bouquet the operator may have created. */
+export function panelIdToBouquet(panelId: string | null | undefined): BouquetId | null {
+    if (!panelId) return null;
+    for (const k of BOUQUET_IDS) {
+        if (bouquetToPanelId(k) === String(panelId)) return k;
+    }
+    return null;
 }
 
-/** Renewal months — includes +1 (we let customers top up
- *  one month at a time even though the initial signups are
- *  always 3+). The price is $15/month flat — slightly above
- *  the 3-month plan's $12/mo rate, which is the standard
- *  "month-to-month convenience" premium for IPTV. */
-export type RenewalMonths = 1 | 3 | 6 | 12;
+/** True if the bouquet key is one of the 4 standard ones
+ *  (i.e. self-serve renewal is available). False means the
+ *  customer is on a custom panel bouquet and needs to
+ *  contact support to renew. */
+export function isStandardBouquet(b: BouquetId | null): b is BouquetId {
+    return b !== null && (BOUQUET_IDS as string[]).includes(b);
+}
 
-export const RENEWAL_PRICE_PER_MONTH = 15;
-
-export function priceForRenewal(months: RenewalMonths): number {
-    return months * RENEWAL_PRICE_PER_MONTH;
+/** Display label for any bouquet key, including the synthetic
+ *  "custom" sentinel. The dashboard uses this so we can show
+ *  "Custom" (with the actual numeric id underneath) for
+ *  GP-only customers on non-standard bouquets. */
+export function bouquetDisplayLabel(
+    bouquet: BouquetId | "custom",
+    panelId: string | null | undefined = null,
+): string {
+    if (bouquet === "custom") {
+        return panelId ? `Custom (panel ${panelId})` : "Custom";
+    }
+    return BOUQUET_LABELS[bouquet] || bouquet;
 }

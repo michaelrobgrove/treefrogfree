@@ -81,19 +81,24 @@
                                 class="w-full bg-gray-800 hover:bg-gray-700 text-white font-semibold px-5 py-3 rounded-lg transition-colors tf-focus">
                             + Extend months &darr;
                         </button>
+                        <button id="contact-renew-btn" type="button" hidden
+                                data-action="open-contact-renew"
+                                class="w-full bg-gray-800 hover:bg-gray-700 text-white font-semibold px-5 py-3 rounded-lg transition-colors tf-focus">
+                            Contact support to renew
+                        </button>
                         <div id="renew-menu"
                              class="hidden absolute z-10 mt-2 right-0 bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden min-w-[14rem]">
                             <button type="button" data-months="1"  class="renew-opt flex items-center justify-between w-full text-left px-4 py-2 hover:bg-gray-700 text-sm">
                                 <span>+1 month</span><span class="text-gray-400 ml-4">$15</span>
                             </button>
                             <button type="button" data-months="3"  class="renew-opt flex items-center justify-between w-full text-left px-4 py-2 hover:bg-gray-700 text-sm">
-                                <span>+3 months</span><span class="text-gray-400 ml-4">$45</span>
+                                <span>+3 months</span><span class="text-gray-400 ml-4">$36</span>
                             </button>
                             <button type="button" data-months="6"  class="renew-opt flex items-center justify-between w-full text-left px-4 py-2 hover:bg-gray-700 text-sm">
-                                <span>+6 months</span><span class="text-gray-400 ml-4">$90</span>
+                                <span>+6 months</span><span class="text-gray-400 ml-4">$60</span>
                             </button>
                             <button type="button" data-months="12" class="renew-opt flex items-center justify-between w-full text-left px-4 py-2 hover:bg-gray-700 text-sm">
-                                <span>+12 months</span><span class="text-gray-400 ml-4">$180</span>
+                                <span>+12 months</span><span class="text-gray-400 ml-4">$96</span>
                             </button>
                         </div>
                     </div>
@@ -179,11 +184,31 @@
 
             <!-- Account info -->
             <section class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6 mb-6">
-                <h2 class="text-lg font-semibold mb-3">Account</h2>
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="text-lg font-semibold">Account</h2>
+                    <button id="edit-profile-btn" type="button"
+                            class="text-sm text-frog hover:underline tf-focus">Edit</button>
+                </div>
                 <dl class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    <div>
+                        <dt class="text-gray-400">Name</dt>
+                        <dd id="acct-name">&mdash;</dd>
+                    </div>
                     <div>
                         <dt class="text-gray-400">Email</dt>
                         <dd id="acct-email" class="font-mono">&mdash;</dd>
+                    </div>
+                    <div>
+                        <dt class="text-gray-400">Discord</dt>
+                        <dd id="acct-discord">&mdash;</dd>
+                    </div>
+                    <div>
+                        <dt class="text-gray-400">Telegram</dt>
+                        <dd id="acct-telegram">&mdash;</dd>
+                    </div>
+                    <div>
+                        <dt class="text-gray-400">Reddit</dt>
+                        <dd id="acct-reddit">&mdash;</dd>
                     </div>
                     <div>
                         <dt class="text-gray-400">Order ID</dt>
@@ -211,6 +236,84 @@
                 Turn off auto-renew
             </button>
         </div>
+    </dialog>
+
+    <!-- Edit profile modal -->
+    <dialog id="profile-modal" class="bg-gray-800 border border-gray-700 rounded-2xl p-6 max-w-lg w-full text-white">
+        <h2 class="text-xl font-bold mb-4">Edit profile</h2>
+        <form id="profile-form" class="space-y-3" autocomplete="on" novalidate>
+            <label class="block">
+                <span class="text-sm text-gray-300 mb-1 block">Name <span class="text-red-400">*</span></span>
+                <input id="profile-name" name="name" type="text" required maxlength="100"
+                       class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 tf-focus"/>
+            </label>
+            <label class="block">
+                <span class="text-sm text-gray-300 mb-1 block">Email <span class="text-red-400">*</span></span>
+                <input id="profile-email" name="email" type="email" required maxlength="254"
+                       class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 tf-focus"/>
+            </label>
+            <div class="border-t border-gray-700 pt-3">
+                <div class="text-sm text-gray-300 mb-2">Contact handles <span class="text-gray-500 font-normal">(optional)</span></div>
+                <div class="space-y-3">
+                    <label class="block">
+                        <span class="text-xs text-gray-400 mb-1 block">Discord</span>
+                        <input id="profile-discord" name="discord" type="text" maxlength="64"
+                               class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm tf-focus"/>
+                    </label>
+                    <label class="block">
+                        <span class="text-xs text-gray-400 mb-1 block">Telegram</span>
+                        <input id="profile-telegram" name="telegram" type="text" maxlength="64"
+                               class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm tf-focus"/>
+                    </label>
+                    <label class="block">
+                        <span class="text-xs text-gray-400 mb-1 block">Reddit</span>
+                        <input id="profile-reddit" name="reddit" type="text" maxlength="64"
+                               class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 text-sm tf-focus"/>
+                    </label>
+                </div>
+            </div>
+            <div class="flex gap-3 justify-end pt-2">
+                <button id="profile-cancel" type="button"
+                        class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-sm font-semibold tf-focus">
+                    Cancel
+                </button>
+                <button id="profile-save" type="submit"
+                        class="px-4 py-2 rounded-lg bg-frog hover:bg-green-500 text-gray-900 text-sm font-semibold tf-focus">
+                    Save
+                </button>
+            </div>
+        </form>
+    </dialog>
+
+    <!-- Contact support to renew (custom-bouquet customers) -->
+    <dialog id="contact-renew-modal" class="bg-gray-800 border border-gray-700 rounded-2xl p-6 max-w-lg w-full text-white">
+        <h2 class="text-xl font-bold mb-2">Contact support to renew</h2>
+        <p class="text-sm text-gray-300 mb-4">
+            Your account is on a custom Gold Panel bouquet that we don't bill through
+            this site. Send us a note and we'll work out the renewal with you
+            directly. We typically reply within a business day.
+        </p>
+        <form id="contact-renew-form" class="space-y-3" novalidate>
+            <label class="block">
+                <span class="text-sm text-gray-300 mb-1 block">Your message <span class="text-red-400">*</span></span>
+                <textarea id="contact-renew-message" name="message" required maxlength="2000" rows="5"
+                          class="w-full bg-gray-900 border border-gray-700 text-white rounded-lg px-3 py-2 tf-focus"
+                          placeholder="What do you need help with?"></textarea>
+            </label>
+            <div class="text-xs text-gray-500">
+                Sending as <span id="contact-renew-email" class="text-gray-300">&mdash;</span>.
+            </div>
+            <div class="flex gap-3 justify-end pt-2">
+                <button id="contact-renew-cancel" type="button"
+                        class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-sm font-semibold tf-focus">
+                    Cancel
+                </button>
+                <button id="contact-renew-send" type="submit"
+                        class="px-4 py-2 rounded-lg bg-frog hover:bg-green-500 text-gray-900 text-sm font-semibold tf-focus">
+                    Send
+                </button>
+            </div>
+        </form>
     </dialog>
 
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.0" crossorigin="anonymous"></script>
@@ -248,11 +351,18 @@
                 "us_w":   "US + Adult",
                 "ca_wo":  "Canada",
                 "ca_w":   "Canada + Adult",
+                "custom": "Custom",
             };
 
             // Populate fields.
             document.getElementById("plan-label").textContent    = `${me.plan_months} months`;
-            document.getElementById("bouquet-label").textContent = BOUQUET_LABELS[me.bouquet] || me.bouquet;
+            // Prefer the server-computed bouquet_label (it
+            // handles the "Custom (panel 12345)" case for
+            // GP-only customers on non-standard bouquets).
+            // Fall back to the local table if the server
+            // omitted it.
+            document.getElementById("bouquet-label").textContent =
+                me.bouquet_label || BOUQUET_LABELS[me.bouquet] || me.bouquet || "—";
             document.getElementById("expires-at").textContent    = window.tf.formatDate(me.expires_at);
             document.getElementById("status-text").textContent   = humanStatus(me);
             document.getElementById("renewal-summary").textContent = renewalSummary(me);
@@ -263,7 +373,11 @@
             document.getElementById("dns-primary").textContent   = me.dns_primary   || "—";
             document.getElementById("dns-secondary").textContent = me.dns_secondary || "—";
 
+            document.getElementById("acct-name").textContent  = me.name  || "—";
             document.getElementById("acct-email").textContent = me.email || "—";
+            document.getElementById("acct-discord").textContent  = (me.contact && me.contact.discord)  || "—";
+            document.getElementById("acct-telegram").textContent = (me.contact && me.contact.telegram) || "—";
+            document.getElementById("acct-reddit").textContent   = (me.contact && me.contact.reddit)   || "—";
             document.getElementById("acct-orderid").textContent = me.paypal_order_id || "—";
 
             // Wire copy buttons that target a specific element by ID.
@@ -339,8 +453,17 @@
             }
 
             // Renew menu — generates a payment link and surfaces it.
-            const renewBtn  = document.getElementById("renew-btn");
-            const renewMenu = document.getElementById("renew-menu");
+            // For accounts on a custom (non-standard) Gold Panel
+            // bouquet, the self-serve renew button is hidden and
+            // replaced with a "Contact support to renew" button.
+            const renewBtn          = document.getElementById("renew-btn");
+            const renewMenu         = document.getElementById("renew-menu");
+            const contactRenewBtn   = document.getElementById("contact-renew-btn");
+            if (me.is_custom_bouquet || !me.can_self_renew) {
+                renewBtn.hidden = true;
+                contactRenewBtn.hidden = false;
+            }
+            contactRenewBtn.addEventListener("click", () => openContactRenewModal(me));
             renewBtn.addEventListener("click", (e) => {
                 e.stopPropagation();
                 renewMenu.classList.toggle("hidden");
@@ -379,7 +502,101 @@
                 catch (e) { /* ignore */ }
                 window.location.href = "login.html";
             });
+
+            // Edit profile.
+            const profileModal  = document.getElementById("profile-modal");
+            const profileForm   = document.getElementById("profile-form");
+            const profileCancel = document.getElementById("profile-cancel");
+            const profileSave   = document.getElementById("profile-save");
+            const profileFields = {
+                name:     document.getElementById("profile-name"),
+                email:    document.getElementById("profile-email"),
+                discord:  document.getElementById("profile-discord"),
+                telegram: document.getElementById("profile-telegram"),
+                reddit:   document.getElementById("profile-reddit"),
+            };
+            document.getElementById("edit-profile-btn").addEventListener("click", () => {
+                profileFields.name.value     = me.name || "";
+                profileFields.email.value    = me.email || "";
+                profileFields.discord.value  = (me.contact && me.contact.discord)  || "";
+                profileFields.telegram.value = (me.contact && me.contact.telegram) || "";
+                profileFields.reddit.value   = (me.contact && me.contact.reddit)   || "";
+                profileModal.showModal();
+            });
+            profileCancel.addEventListener("click", () => profileModal.close());
+            profileForm.addEventListener("submit", async (ev) => {
+                ev.preventDefault();
+                profileSave.disabled = true;
+                const orig = profileSave.textContent;
+                profileSave.textContent = "Saving…";
+                try {
+                    await window.tf.api("/api/account/contact", {
+                        method: "POST",
+                        body: {
+                            name:  profileFields.name.value.trim(),
+                            email: profileFields.email.value.trim(),
+                            discord:  profileFields.discord.value.trim()  || null,
+                            telegram: profileFields.telegram.value.trim() || null,
+                            reddit:   profileFields.reddit.value.trim()   || null,
+                        },
+                    });
+                    window.tf.toast("Profile updated.", "success");
+                    profileModal.close();
+                    setTimeout(() => window.location.reload(), 600);
+                } catch (e) {
+                    window.tf.toast(e.message || "Could not save.", "error");
+                    profileSave.disabled = false;
+                    profileSave.textContent = orig;
+                }
+            });
+
+            // Contact-support-to-renew modal (custom-bouquet customers).
+            const contactRenewModal   = document.getElementById("contact-renew-modal");
+            const contactRenewForm    = document.getElementById("contact-renew-form");
+            const contactRenewCancel  = document.getElementById("contact-renew-cancel");
+            const contactRenewSend    = document.getElementById("contact-renew-send");
+            const contactRenewMessage = document.getElementById("contact-renew-message");
+            const contactRenewEmail   = document.getElementById("contact-renew-email");
+            contactRenewCancel.addEventListener("click", () => contactRenewModal.close());
+            contactRenewForm.addEventListener("submit", async (ev) => {
+                ev.preventDefault();
+                const msg = contactRenewMessage.value.trim();
+                if (!msg) {
+                    window.tf.toast("Please include a message.", "error");
+                    return;
+                }
+                contactRenewSend.disabled = true;
+                const orig = contactRenewSend.textContent;
+                contactRenewSend.textContent = "Sending…";
+                try {
+                    await window.tf.api("/api/account/contact", {
+                        method: "POST",
+                        body: { kind: "renewal_custom", message: msg },
+                    });
+                    contactRenewModal.close();
+                    window.tf.toast("Sent. We'll be in touch soon.", "success");
+                    contactRenewMessage.value = "";
+                } catch (e) {
+                    window.tf.toast(e.message || "Could not send.", "error");
+                } finally {
+                    contactRenewSend.disabled = false;
+                    contactRenewSend.textContent = orig;
+                }
+            });
         })();
+
+        function openContactRenewModal(me) {
+            // Called by the renew-button wiring above when the account is on a
+            // non-standard Gold Panel bouquet. We pre-fill the email label so the
+            // customer knows which address the operator will reply to, and reset
+            // the textarea in case the modal is being re-opened.
+            const emailEl = document.getElementById("contact-renew-email");
+            if (emailEl) emailEl.textContent = me.email || "(your account email)";
+            const msg = document.getElementById("contact-renew-message");
+            if (msg) msg.value = "";
+            const modal = document.getElementById("contact-renew-modal");
+            if (modal) modal.showModal();
+        }
 
         function humanStatus(me) {
             if (me.status === "active") return "Active";

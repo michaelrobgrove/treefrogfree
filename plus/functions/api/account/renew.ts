@@ -31,8 +31,7 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
 
     const { getSessionAccount } = await import("../../_lib/session");
     const { putAccount } = await import("../../_lib/kv");
-    const { BOUQUET_LABELS, priceFor } = await import("../../_lib/plans");
-    // (priceFor is used below to compute the renewal amount.)
+    const { BOUQUET_LABELS, priceFor, isStandardBouquet } = await import("../../_lib/plans");
     const { createOrder } = await import("../../_lib/paypal");
     const { renewalLinkEmail, sendEmail } = await import("../../_lib/email");
 
@@ -44,6 +43,18 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
     }
     if (acct.status === "expired" || acct.status === "refunded") {
         return json({ error: "Account is not active" }, 400);
+    }
+    // Refuse self-serve renewal for accounts on a custom
+    // (non-standard) Gold Panel bouquet. They need to
+    // contact support to renew at whatever arrangement
+    // the operator has set up. The dashboard hides the
+    // renew button for these accounts; this is the
+    // server-side guard in case someone calls the API
+    // directly.
+    if (!isStandardBouquet(acct.bouquet)) {
+        return json({
+            error: "Your current plan doesn't match a standard Tree Frog Plus bouquet. Please contact support to renew.",
+        }, 400);
     }
     if (acct.pending_renewal_order_id) {
         return json({

@@ -41,7 +41,13 @@
         <!-- Plan length (segmented) -->
         <section class="mb-10">
             <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 text-center">Plan length</h2>
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3" id="plans-grid">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3" id="plans-grid">
+                <button type="button" data-plan="1" data-price="15"
+                        class="plan-btn tf-card bg-gray-800/60 border-2 border-gray-700 rounded-2xl p-6 text-center tf-focus">
+                    <div class="text-sm text-gray-400 mb-1">1 month</div>
+                    <div class="text-3xl font-bold">$15</div>
+                    <div class="text-xs text-gray-500 mt-1">$15 / month</div>
+                </button>
                 <button type="button" data-plan="3" data-price="36"
                         class="plan-btn tf-card bg-gray-800/60 border-2 border-gray-700 rounded-2xl p-6 text-center tf-focus">
                     <div class="text-sm text-gray-400 mb-1">3 months</div>
@@ -54,11 +60,11 @@
                     <div class="text-3xl font-bold">$60</div>
                     <div class="text-xs text-gray-500 mt-1">$10 / month</div>
                 </button>
-                <button type="button" data-plan="12" data-price="120"
+                <button type="button" data-plan="12" data-price="96"
                         class="plan-btn tf-card bg-gray-800/60 border-2 border-frog rounded-2xl p-6 text-center tf-focus relative">
                     <div class="inline-block text-xs bg-frog text-gray-900 font-semibold uppercase tracking-wider px-2 py-0.5 rounded mb-1">Best value</div>
-                    <div class="text-3xl font-bold">$120</div>
-                    <div class="text-xs text-gray-500 mt-1">$10 / month</div>
+                    <div class="text-3xl font-bold">$96</div>
+                    <div class="text-xs text-gray-500 mt-1">$8 / month</div>
                 </button>
             </div>
         </section>
@@ -110,6 +116,60 @@
             </div>
         </section>
 
+        <!-- Your details (required for new accounts) -->
+        <section class="mb-10 max-w-xl mx-auto">
+            <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 text-center">Your details</h2>
+            <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6">
+                <div class="space-y-4">
+                    <div>
+                        <label for="cust-name" class="block text-sm font-medium text-gray-300 mb-1">
+                            Full name <span class="text-red-400">*</span>
+                        </label>
+                        <input id="cust-name" name="name" type="text" required maxlength="100"
+                               autocomplete="name"
+                               class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-frog tf-focus"
+                               placeholder="Jane Doe"/>
+                    </div>
+                    <div>
+                        <label for="cust-email" class="block text-sm font-medium text-gray-300 mb-1">
+                            Email <span class="text-red-400">*</span>
+                        </label>
+                        <input id="cust-email" name="email" type="email" required maxlength="254"
+                               autocomplete="email"
+                               class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-frog tf-focus"
+                               placeholder="you@example.com"/>
+                        <p class="text-xs text-gray-500 mt-1">Receipts and your dashboard login are sent here.</p>
+                    </div>
+                    <div class="border-t border-gray-700 pt-4">
+                        <div class="text-sm font-medium text-gray-300 mb-1">Contact handles <span class="text-gray-500 font-normal">(optional)</span></div>
+                        <p class="text-xs text-gray-500 mb-3">
+                            For service updates, renewals, and any future community groups. Skip what you don't use.
+                        </p>
+                        <div class="space-y-3">
+                            <div>
+                                <label for="cust-discord" class="block text-xs text-gray-400 mb-1">Discord</label>
+                                <input id="cust-discord" name="discord" type="text" maxlength="64"
+                                       class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-frog tf-focus"
+                                       placeholder="username or username#1234"/>
+                            </div>
+                            <div>
+                                <label for="cust-telegram" class="block text-xs text-gray-400 mb-1">Telegram</label>
+                                <input id="cust-telegram" name="telegram" type="text" maxlength="64"
+                                       class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-frog tf-focus"
+                                       placeholder="@handle"/>
+                            </div>
+                            <div>
+                                <label for="cust-reddit" class="block text-xs text-gray-400 mb-1">Reddit</label>
+                                <input id="cust-reddit" name="reddit" type="text" maxlength="64"
+                                       class="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-frog tf-focus"
+                                       placeholder="u/handle"/>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <!-- Summary + checkout -->
         <section class="max-w-xl mx-auto">
             <div class="bg-gray-800 border border-gray-700 rounded-2xl p-6">
@@ -132,8 +192,7 @@
                     Continue to PayPal
                 </button>
                 <p class="text-xs text-gray-500 text-center mt-3">
-                    PayPal auto-bills at the same rate on the same date each period.
-                    Cancel anytime from your dashboard &mdash; no refunds.
+                    One-time payment via PayPal. No auto-billing &mdash; you decide when to extend from your dashboard.
                 </p>
             </div>
         </section>
@@ -182,6 +241,8 @@
                 "ca_wo":  "Canada",
                 "ca_w":   "Canada + Adult",
             };
+            // Must match _lib/plans.ts.
+            const PLAN_PRICES = { 1: 15, 3: 36, 6: 60, 12: 96 };
 
             let selectedPlan = 12; // default: best value
             let selectedBouquet = null;
@@ -192,6 +253,10 @@
             const sumBouquet  = document.getElementById("sum-bouquet");
             const sumPrice    = document.getElementById("sum-price");
             const checkoutBtn = document.getElementById("checkout-btn");
+
+            function priceFor(plan) {
+                return PLAN_PRICES[plan] || null;
+            }
 
             function update() {
                 planBtns.forEach((b) => {
@@ -205,13 +270,35 @@
                     b.classList.toggle("border-frog", !!isSel);
                     b.classList.toggle("border-gray-700", !isSel);
                 });
-                const price = selectedPlan
-                    ? (selectedPlan === 3 ? 36 : selectedPlan === 6 ? 60 : 120)
-                    : null;
-                sumPlan.textContent    = selectedPlan ? `${selectedPlan} months` : "—";
+                const price = priceFor(selectedPlan);
+                sumPlan.textContent    = selectedPlan ? `${selectedPlan} month${selectedPlan === 1 ? "" : "s"}` : "—";
                 sumBouquet.textContent = selectedBouquet ? BOUQUET_LABELS[selectedBouquet] : "—";
                 sumPrice.textContent   = price != null ? `$${price}` : "—";
-                checkoutBtn.disabled   = !(selectedPlan && selectedBouquet);
+                checkoutBtn.disabled   = !(selectedPlan && selectedBouquet && formValid());
+            }
+
+            // Form fields.
+            const nameEl  = document.getElementById("cust-name");
+            const emailEl = document.getElementById("cust-email");
+            const discordEl  = document.getElementById("cust-discord");
+            const telegramEl = document.getElementById("cust-telegram");
+            const redditEl   = document.getElementById("cust-reddit");
+            [nameEl, emailEl, discordEl, telegramEl, redditEl].forEach((el) => {
+                el.addEventListener("input", update);
+            });
+            function formValid() {
+                if (!nameEl.value.trim()) return false;
+                if (!isValidEmail(emailEl.value.trim())) return false;
+                return true;
+            }
+            function isValidEmail(s) {
+                if (typeof s !== "string") return false;
+                const t = s.trim();
+                if (t.length < 3 || t.length > 254) return false;
+                const at = t.indexOf("@");
+                if (at < 1 || at === t.length - 1) return false;
+                if (!t.slice(at + 1).includes(".")) return false;
+                return true;
             }
 
             planBtns.forEach((btn) => {
@@ -240,13 +327,27 @@
 
             checkoutBtn.addEventListener("click", async () => {
                 if (!(selectedPlan && selectedBouquet)) return;
+                if (!formValid()) {
+                    window.tf.toast("Fill in your name and a valid email before continuing.", "error");
+                    if (!nameEl.value.trim()) nameEl.focus();
+                    else emailEl.focus();
+                    return;
+                }
                 checkoutBtn.disabled = true;
                 const original = checkoutBtn.textContent;
                 checkoutBtn.innerHTML = '<span class="tf-spinner"></span> Redirecting to PayPal…';
                 try {
                     const data = await window.tf.api("/api/checkout", {
                         method: "POST",
-                        body: { plan_months: selectedPlan, bouquet: selectedBouquet },
+                        body: {
+                            plan_months: selectedPlan,
+                            bouquet: selectedBouquet,
+                            name:  nameEl.value.trim(),
+                            email: emailEl.value.trim(),
+                            discord:  discordEl.value.trim()  || undefined,
+                            telegram: telegramEl.value.trim() || undefined,
+                            reddit:   redditEl.value.trim()   || undefined,
+                        },
                     });
                     if (!data.approval_url) throw new Error("No approval URL returned.");
                     // PayPal preserves extra query params on

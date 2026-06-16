@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Setup Guide &mdash; Tree Frog Plus</title>
-    <meta name="description" content="How to set up Tree Frog Plus on Android, Fire Stick, and Roku.">
+    <meta name="description" content="How to set up Tree Frog Plus on Android, Fire Stick, and Roku. Recommended apps: TiviMate and Sparkle.">
     <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -35,7 +35,7 @@
 
         <header class="text-center mb-10">
             <h1 class="text-3xl md:text-4xl font-bold mb-3">Setup guide</h1>
-            <p class="text-gray-400">Pick your device. All apps below use the same Xtream Codes login you got in your welcome email.</p>
+            <p class="text-gray-400">Pick your device. All apps use the same Xtream Codes login you got in your welcome email.</p>
         </header>
 
         <!-- Quick navigation -->
@@ -45,6 +45,24 @@
             <a href="#roku"       class="bg-gray-800/60 border border-gray-700 rounded-xl p-3 hover:border-frog transition-colors">&#x1F4FA; Roku</a>
         </nav>
 
+        <!-- App recommendation banner -->
+        <div class="bg-frog/10 border border-frog/30 rounded-2xl p-5 mb-10">
+            <div class="flex items-start gap-3">
+                <div class="text-2xl">&#x1F4AF;</div>
+                <div>
+                    <h3 class="font-semibold text-frog mb-1">We highly recommend TiviMate or Sparkle</h3>
+                    <p class="text-sm text-gray-300">
+                        Both apps support Xtream Codes login and work great on Android phones, tablets, Android
+                        TV, and Fire TV. Install instructions are in the Android and Fire Stick sections below.
+                    </p>
+                    <p class="text-xs text-gray-400 mt-2">
+                        Note: any additional payment required by these apps is from the developers of
+                        them, not Tree Frog Plus. We do not sell or profit from TiviMate or Sparkle.
+                    </p>
+                </div>
+            </div>
+        </div>
+
         <!-- ============== ANDROID ============== -->
         <section id="android" class="mb-12 scroll-mt-20">
             <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6 md:p-8">
@@ -53,20 +71,36 @@
                     <h2 class="text-2xl font-bold">Android (phone, tablet, Android TV)</h2>
                 </div>
 
-                <ol class="space-y-3 list-decimal list-inside text-gray-300 mb-6">
-                    <li>Install <strong class="text-white">IPTV Smarters Pro</strong> from the Google Play Store, or sideload <strong class="text-white">TiviMate</strong> from the developer's site.</li>
+                <p class="text-gray-300 mb-4">
+                    Install <strong class="text-white">TiviMate</strong> (recommended) or <strong class="text-white">Sparkle</strong> from the
+                    official links below, then sign in with your Xtream Codes credentials.
+                </p>
+
+                <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2 mt-6">TiviMate</h3>
+                <ul class="space-y-2 list-disc list-inside text-gray-300 mb-4">
+                    <li>Open the <strong class="text-white">Downloader</strong> app and enter the code <code class="bg-gray-900 px-1.5 py-0.5 rounded text-frog">272483</code> to fetch the official APK from the developer.</li>
+                    <li>Or sideload the APK directly: <a href="https://files.tivimate.com/tivimate.apk" class="text-frog hover:underline">https://files.tivimate.com/tivimate.apk</a></li>
+                </ul>
+
+                <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2 mt-4">Sparkle</h3>
+                <ul class="space-y-2 list-disc list-inside text-gray-300 mb-4">
+                    <li>Install from APKPure: <a href="https://d.apkpure.com/b/APK/se.hedekonsult.sparkle?version=latest" class="text-frog hover:underline">https://d.apkpure.com/b/APK/se.hedekonsult.sparkle?version=latest</a></li>
+                </ul>
+
+                <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2 mt-6">Sign in with Xtream Codes</h3>
+                <ol class="space-y-2 list-decimal list-inside text-gray-300">
                     <li>Open the app and choose <em>Login with Xtream Codes API</em>.</li>
                     <li>Enter the credentials from your welcome email:
                         <ul class="list-disc list-inside ml-6 mt-2 space-y-1 text-sm">
-                            <li><strong>Server:</strong> one of the DNS endpoints below (apex first).</li>
+                            <li><strong>Server:</strong> a DNS endpoint from the box below (apex first).</li>
                             <li><strong>Username:</strong> from your welcome email.</li>
                             <li><strong>Password:</strong> from your welcome email.</li>
                         </ul>
                     </li>
-                    <li>Tap <em>Add User</em> &rarr; <em>Login</em>. The app will load the channel list, EPG, and VOD.</li>
+                    <li>Tap <em>Add User</em> &rarr; <em>Login</em>. The app loads the channel list, EPG, and VOD.</li>
                 </ol>
 
-                <div class="bg-gray-900/60 border border-gray-700 rounded-xl p-4">
+                <div class="bg-gray-900/60 border border-gray-700 rounded-xl p-4 mt-6">
                     <div class="text-xs text-gray-400 uppercase tracking-wider mb-2">DNS endpoints (pick one)</div>
                     <div class="space-y-2">
                         <div class="flex items-center gap-2">
@@ -92,15 +126,36 @@
                     <h2 class="text-2xl font-bold">Fire Stick / Fire TV</h2>
                 </div>
 
-                <ol class="space-y-3 list-decimal list-inside text-gray-300 mb-6">
+                <p class="text-gray-300 mb-4">
+                    Same apps as Android. We recommend <strong class="text-white">TiviMate</strong> for Fire TV.
+                </p>
+
+                <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2">Get the apps</h3>
+                <ol class="space-y-3 list-decimal list-inside text-gray-300 mb-4">
                     <li>From the Fire TV home screen, search for and install <strong class="text-white">Downloader</strong> (orange icon).</li>
                     <li>Open <em>Settings &rarr; My Fire TV &rarr; Developer Options</em> and turn on <em>Apps from Unknown Sources</em> for Downloader.</li>
-                    <li>Open Downloader, enter the code <code class="bg-gray-900 px-1.5 py-0.5 rounded text-frog">641178</code>, and install <strong class="text-white">IPTV Smarters</strong>.</li>
-                    <li>Open IPTV Smarters, choose <em>Login with Xtream Codes API</em>, and enter the same credentials as Android above.</li>
+                    <li>In Downloader, enter the code <code class="bg-gray-900 px-1.5 py-0.5 rounded text-frog">272483</code> to install <strong class="text-white">TiviMate</strong> from the developer's site. Or enter <code class="bg-gray-900 px-1.5 py-0.5 rounded text-frog">4527163</code> for our unlocked APK (see below).</li>
                 </ol>
 
-                <div class="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-sm text-yellow-200">
-                    <strong>Heads up:</strong> "Apps from Unknown Sources" stays on for that one app. You can turn it off again after IPTV Smarters installs.
+                <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2 mt-6">Tree Frog Plus unlocked APK</h3>
+                <p class="text-sm text-gray-300 mb-3">
+                    We host an APK that's pre-configured for Tree Frog Plus and unlocked for our subscribers at no extra cost.
+                    You still sign in with your own credentials.
+                </p>
+                <ul class="space-y-2 list-disc list-inside text-gray-300 mb-4">
+                    <li>Downloader code: <code class="bg-gray-900 px-1.5 py-0.5 rounded text-frog">4527163</code></li>
+                    <li>Direct link: <a href="https://drive.google.com/uc?export=download&id=1_3OSnh_wIyxz9FA4Am8gMe2ocwLhsoDi" class="text-frog hover:underline break-all">https://drive.google.com/uc?export=download&id=1_3OSnh_wIyxz9FA4Am8gMe2ocwLhsoDi</a></li>
+                </ul>
+
+                <h3 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-2 mt-6">Sign in</h3>
+                <ol class="space-y-2 list-decimal list-inside text-gray-300">
+                    <li>Open the app.</li>
+                    <li>Choose <em>Login with Xtream Codes API</em>.</li>
+                    <li>Enter the same credentials as the Android section above.</li>
+                </ol>
+
+                <div class="bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 text-sm text-yellow-200 mt-6">
+                    <strong>Heads up:</strong> "Apps from Unknown Sources" stays on for Downloader. You can turn it off again once your app is installed.
                 </div>
             </div>
         </section>
@@ -116,12 +171,7 @@
                 <ol class="space-y-3 list-decimal list-inside text-gray-300 mb-6">
                     <li>From the Roku home screen, open <em>Streaming Store</em> and search for <strong class="text-white">IPTV Smarters</strong>.</li>
                     <li>Add the channel and open it.</li>
-                    <li>Choose <em>Login with Xtream Codes API</em> and enter:
-                        <ul class="list-disc list-inside ml-6 mt-2 space-y-1 text-sm">
-                            <li><strong>Server:</strong> a DNS endpoint from the Android section above.</li>
-                            <li><strong>Username</strong> &amp; <strong>Password</strong>: from your welcome email.</li>
-                        </ul>
-                    </li>
+                    <li>Choose <em>Login with Xtream Codes API</em> and enter the same credentials as Android.</li>
                     <li>Tap <em>Add User</em>. The channel list will load &mdash; EPG shows up automatically.</li>
                 </ol>
 
@@ -130,18 +180,6 @@
                     <strong class="text-white">Roku Web Browser</strong> can reach
                     <a href="dashboard.html" class="text-frog hover:underline">your dashboard</a> for the in-browser player.
                 </div>
-            </div>
-        </section>
-
-        <!-- TiviMate coming soon -->
-        <section class="mb-12">
-            <div class="bg-gradient-to-br from-gray-800 to-gray-900 border border-frog/30 rounded-2xl p-6 md:p-8 text-center">
-                <div class="text-3xl mb-2">&#x1F39B;&#xFE0F;</div>
-                <h2 class="text-xl font-bold mb-1">TiviMate premium APK &mdash; coming soon</h2>
-                <p class="text-gray-400 text-sm max-w-md mx-auto">
-                    We'll be offering a pre-activated TiviMate premium APK for Fire Stick &amp; Android TV
-                    shortly. Subscribers will get the download link here.
-                </p>
             </div>
         </section>
 
@@ -168,5 +206,8 @@
     </footer>
 
     <script src="/assets/app.js"></script>
+    <script>
+        window.tf.bindCopyButtons();
+    </script>
 </body>
 </html>
