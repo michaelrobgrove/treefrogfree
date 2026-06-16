@@ -82,11 +82,19 @@
                             + Extend months &darr;
                         </button>
                         <div id="renew-menu"
-                             class="hidden absolute z-10 mt-2 right-0 bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden">
-                            <button type="button" data-months="1"  class="renew-opt block w-full text-left px-4 py-2 hover:bg-gray-700 text-sm">+1 month</button>
-                            <button type="button" data-months="3"  class="renew-opt block w-full text-left px-4 py-2 hover:bg-gray-700 text-sm">+3 months</button>
-                            <button type="button" data-months="6"  class="renew-opt block w-full text-left px-4 py-2 hover:bg-gray-700 text-sm">+6 months</button>
-                            <button type="button" data-months="12" class="renew-opt block w-full text-left px-4 py-2 hover:bg-gray-700 text-sm">+12 months</button>
+                             class="hidden absolute z-10 mt-2 right-0 bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden min-w-[14rem]">
+                            <button type="button" data-months="1"  class="renew-opt flex items-center justify-between w-full text-left px-4 py-2 hover:bg-gray-700 text-sm">
+                                <span>+1 month</span><span class="text-gray-400 ml-4">$15</span>
+                            </button>
+                            <button type="button" data-months="3"  class="renew-opt flex items-center justify-between w-full text-left px-4 py-2 hover:bg-gray-700 text-sm">
+                                <span>+3 months</span><span class="text-gray-400 ml-4">$45</span>
+                            </button>
+                            <button type="button" data-months="6"  class="renew-opt flex items-center justify-between w-full text-left px-4 py-2 hover:bg-gray-700 text-sm">
+                                <span>+6 months</span><span class="text-gray-400 ml-4">$90</span>
+                            </button>
+                            <button type="button" data-months="12" class="renew-opt flex items-center justify-between w-full text-left px-4 py-2 hover:bg-gray-700 text-sm">
+                                <span>+12 months</span><span class="text-gray-400 ml-4">$180</span>
+                            </button>
                         </div>
                     </div>
                     <button id="cancel-btn" type="button"

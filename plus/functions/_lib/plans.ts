@@ -67,11 +67,12 @@ export function priceFor(months: PlanMonths): number {
 
 /** Renewal months — includes +1 (we let customers top up
  *  one month at a time even though the initial signups are
- *  always 3+). The price is $12/month flat, matching the
- *  per-month rate of the 3-month plan. */
+ *  always 3+). The price is $15/month flat — slightly above
+ *  the 3-month plan's $12/mo rate, which is the standard
+ *  "month-to-month convenience" premium for IPTV. */
 export type RenewalMonths = 1 | 3 | 6 | 12;
 
-export const RENEWAL_PRICE_PER_MONTH = 12;
+export const RENEWAL_PRICE_PER_MONTH = 15;
 
 export function priceForRenewal(months: RenewalMonths): number {
     return months * RENEWAL_PRICE_PER_MONTH;
