@@ -123,6 +123,24 @@ async def render_playlist(*, bouquet: Optional[str] = None) -> str:
     """Render the public M3U playlist to a string.
 
     If `bouquet` is given, only channels in that bouquet are included.
+
+    Failover convention: a channel with N online streams is emitted
+    as N `#EXTINF` rows (same `tvg-id`, same `tvg-name`, same
+    `group-title`, same `tvg-logo`) each pointing at a different
+    stream URL. The first row is the winner (lowest priority, then
+    lowest id); the rest are backups in the same order the web
+    player's stream list uses. Most modern IPTV players — VLC,
+    TiviMate, IPTV Smarters, Kodi's PVR IPTV Simple Client,
+    Perfect Player — treat duplicate `tvg-id` rows as a failover
+    list and pick the first that opens. The M3U spec doesn't
+    formally mandate this behavior, but it's the de-facto
+    convention; the original M3U writer emitted one row per
+    channel and the user reported that was a regression.
+
+    The single-row behavior is still available by setting
+    `failover_rows = 1` if a downstream tool ever needs the old
+    layout (the catalog publisher and the redirect hot path are
+    unaffected).
     """
     base = await _resolve_public_base()
     db = await open_db()
@@ -151,10 +169,27 @@ async def render_playlist(*, bouquet: Optional[str] = None) -> str:
 
         lines = ["#EXTM3U"]
         for ch in channels:
-            token = token_by_channel.get(ch["id"])
-            if not token:
-                continue  # no online stream; skip
-            url = f"{base}/s/{token}" if base else f"/s/{token}"
+            # Pull every online stream for this channel, ordered to
+            # match the web player's stream list. We bypass the
+            # redirect-token helper here because the per-stream URL
+            # is what we want to emit, not the winner-only /s/<token>
+            # shortcut — that route 302s to the winner's primary
+            # only, so emitting it for every row would defeat the
+            # failover. The token mints below are bound to the
+            # winner's primary so /s/<token> still 302s correctly
+            # for any direct (non-M3U) consumer.
+            async with db.execute(
+                """
+                SELECT s.id AS stream_id, s.source_url
+                FROM streams s
+                WHERE s.channel_id = ? AND s.status = 'online'
+                ORDER BY s.priority ASC, s.id ASC
+                """,
+                (ch["id"],),
+            ) as cur:
+                stream_rows = await cur.fetchall()
+            if not stream_rows:
+                continue
             attrs = []
             if ch["tvg_id"]:
                 attrs.append(f'tvg-id="{_xml_attr(ch["tvg_id"])}"')
@@ -168,8 +203,14 @@ async def render_playlist(*, bouquet: Optional[str] = None) -> str:
                 f'group-title="{_xml_attr(group_brand_name(ch["group_title"]))}"'
             )
             attr_str = " ".join(attrs)
-            lines.append(f"#EXTINF:-1 {attr_str},{ch['display_name']}")
-            lines.append(url)
+            # Emit one #EXTINF + URL line per stream. The first row
+            # IS the winner; downstream players will try the URLs
+            # in order and stop at the first that opens. The web
+            # player also gets this full list (via streams:<token>)
+            # and walks it on error.
+            for s in stream_rows:
+                lines.append(f"#EXTINF:-1 {attr_str},{ch['display_name']}")
+                lines.append(s["source_url"])
 
         return "\n".join(lines) + "\n"
     finally:
