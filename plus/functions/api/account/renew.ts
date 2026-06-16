@@ -31,14 +31,15 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
 
     const { getSessionAccount } = await import("../../_lib/session");
     const { putAccount } = await import("../../_lib/kv");
-    const { BOUQUET_LABELS, priceForRenewal } = await import("../../_lib/plans");
+    const { BOUQUET_LABELS, priceFor } = await import("../../_lib/plans");
+    // (priceFor is used below to compute the renewal amount.)
     const { createOrder } = await import("../../_lib/paypal");
     const { renewalLinkEmail, sendEmail } = await import("../../_lib/email");
 
     const sess = await getSessionAccount(ctx.request, kv);
     if (!sess) return json({ error: "Not signed in" }, 401);
     const acct = sess.account;
-    if (!acct.panel_username || !acct.panel_password) {
+    if (!acct.panel_username || !acct.panel_password_ct) {
         return json({ error: "Account not yet activated" }, 400);
     }
     if (acct.status === "expired" || acct.status === "refunded") {
@@ -58,7 +59,7 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
     const customId = `renew|${acct.paypal_order_id}|${months}`;
 
     const base = String(ctx.env.PUBLIC_BASE_URL || "https://beta.tfplus.stream");
-    const amount = priceForRenewal(months as 1 | 3 | 6 | 12);
+    const amount = priceFor(months as 1 | 3 | 6 | 12);
     const description =
         `Tree Frog Plus renewal — ${months} months (${BOUQUET_LABELS[acct.bouquet]})`;
 

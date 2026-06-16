@@ -30,11 +30,16 @@ interface PagesContext {
 export const onRequestGet = async (ctx: PagesContext): Promise<Response> => {
     const kv = ctx.env.PLUS_KV as KVNamespace;
     const { getSessionAccount } = await import("../../_lib/session");
+    const { decryptPanelPassword } = await import("../../_lib/kv");
     const sess = await getSessionAccount(ctx.request, kv);
     if (!sess) return json({ error: "Not signed in" }, 401);
     const acct = sess.account;
-    if (!acct.panel_username || !acct.panel_password) {
+    if (!acct.panel_username || !acct.panel_password_ct) {
         return json({ error: "Account not yet activated" }, 400);
+    }
+    const password = await decryptPanelPassword(ctx.env, acct);
+    if (!password) {
+        return json({ error: "Could not decrypt credentials; sign in again to refresh." }, 401);
     }
 
     const url = new URL(ctx.request.url);
@@ -55,7 +60,7 @@ export const onRequestGet = async (ctx: PagesContext): Promise<Response> => {
     const apex = String((globalThis as any).DNS_PRIMARY || "https://apex.tfplus.stream");
     const fwd = new URL(`${apex}/${upstreamPath}`);
     fwd.searchParams.set("username", acct.panel_username);
-    fwd.searchParams.set("password", acct.panel_password);
+    fwd.searchParams.set("password", password);
     // Pass through any caller-provided query params (except the
     // auth ones we set above). workers-types URLSearchParams is
     // missing `.keys()`/`.entries()` so we go via toString.

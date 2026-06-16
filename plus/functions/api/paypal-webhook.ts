@@ -27,7 +27,7 @@
  */
 
 import { verifyWebhookSignature, captureOrder } from "../_lib/paypal";
-import { claimEventId, getAccountBySub, putAccount, type Account } from "../_lib/kv";
+import { claimEventId, getAccountBySub, putAccount, getCheckoutIntent, deleteCheckoutIntent, type Account, type ContactHandles } from "../_lib/kv";
 import { bouquetToPanelId, type BouquetId } from "../_lib/plans";
 import { createM3U, renewM3U, getDeviceInfo, setDeviceStatus } from "../_lib/goldpanel";
 import { welcomeEmail, paymentFailedEmail, renewalReceiptEmail, sendEmail } from "../_lib/email";
@@ -80,9 +80,12 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
     try {
         await dispatch(event, eventType, {
             kv,
+            env: ctx.env,
             captureOrder: (id: string) => captureOrder(kv, id),
             getAccount: (id: string) => getAccountBySub(kv, id),
             putAccount: (a: Account) => putAccount(kv, a),
+            getCheckoutIntent: (id: string) => getCheckoutIntent(kv, id),
+            deleteCheckoutIntent: (id: string) => deleteCheckoutIntent(kv, id),
             bouquetToPanelId,
             createM3U,
             renewM3U,
@@ -105,11 +108,14 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
 
 interface DispatchDeps {
     kv: KVNamespace;
+    env: Record<string, unknown>;
     captureOrder: (id: string) => Promise<any>;
     getAccount: (id: string) => Promise<Account | null>;
     putAccount: (a: Account) => Promise<void>;
+    getCheckoutIntent: (id: string) => Promise<{ name: string; email: string; contact: ContactHandles; created_at: string } | null>;
+    deleteCheckoutIntent: (id: string) => Promise<void>;
     bouquetToPanelId: (b: BouquetId) => string;
-    createM3U: (opts: { sub: 3 | 6 | 12; pack: string; country?: string; notes?: string }) => Promise<any>;
+    createM3U: (opts: { sub: 1 | 3 | 6 | 12; pack: string; country?: string; notes?: string }) => Promise<any>;
     renewM3U: (opts: { username: string; password: string; sub: 1 | 3 | 6 | 12 }) => Promise<any>;
     getDeviceInfo: (opts: { username: string; password: string }) => Promise<any>;
     setDeviceStatus: (opts: { user_id: string; status: "enable" | "disable" }) => Promise<any>;
@@ -167,10 +173,18 @@ async function dispatch(event: any, eventType: string, d: DispatchDeps): Promise
                 console.warn("CAPTURE.COMPLETED: no payer email", orderId);
                 // Don't throw — still record the capture id.
             }
+            // The PayPal capture object has a `create_time`
+            // (and `update_time`). Either works as the
+            // "last PayPal charge" timestamp; create_time is
+            // stable and matches the customer's receipt.
+            const chargeAt: string | null =
+                resource.create_time
+                || resource.update_time
+                || null;
             if (custom.kind === "initial") {
-                await handleInitialCapture(d, orderId, captureId, custom, buyerEmail);
+                await handleInitialCapture(d, orderId, captureId, custom, buyerEmail, chargeAt, d.env);
             } else if (custom.kind === "renewal") {
-                await handleRenewalCapture(d, orderId, captureId, custom, buyerEmail);
+                await handleRenewalCapture(d, orderId, captureId, custom, buyerEmail, chargeAt);
             } else {
                 console.warn("CAPTURE.COMPLETED: unparseable custom_id", customId);
             }
@@ -233,16 +247,16 @@ async function dispatch(event: any, eventType: string, d: DispatchDeps): Promise
  *  `{ kind: "renewal", account_order_id, months }` or
  *  `{ kind: "unknown" }`. */
 function parseCustomId(customId: string):
-    | { kind: "initial"; months: 3 | 6 | 12; bouquet: BouquetId }
+    | { kind: "initial"; months: 1 | 3 | 6 | 12; bouquet: BouquetId }
     | { kind: "renewal"; account_order_id: string; months: 1 | 3 | 6 | 12 }
     | { kind: "unknown" }
 {
     if (!customId) return { kind: "unknown" };
     const parts = customId.split("|");
     if (parts.length === 2) {
-        const months = parseInt(parts[0], 10) as 3 | 6 | 12;
+        const months = parseInt(parts[0], 10) as 1 | 3 | 6 | 12;
         const bouquet = parts[1] as BouquetId;
-        if (![3, 6, 12].includes(months)) return { kind: "unknown" };
+        if (![1, 3, 6, 12].includes(months)) return { kind: "unknown" };
         if (!["us_wo", "us_w", "ca_wo", "ca_w"].includes(bouquet)) return { kind: "unknown" };
         return { kind: "initial", months, bouquet };
     }
@@ -258,8 +272,10 @@ async function handleInitialCapture(
     d: DispatchDeps,
     orderId: string,
     captureId: string,
-    custom: { kind: "initial"; months: 3 | 6 | 12; bouquet: BouquetId },
-    buyerEmail: string,
+    custom: { kind: "initial"; months: 1 | 3 | 6 | 12; bouquet: BouquetId },
+    _buyerEmail: string,
+    chargeAt: string | null,
+    env: Record<string, unknown>,
 ): Promise<void> {
     // If we already provisioned (webhook retry), skip.
     const existing = await d.getAccount(orderId);
@@ -267,20 +283,22 @@ async function handleInitialCapture(
         console.log("CAPTURE.COMPLETED: account already active, skipping", orderId);
         return;
     }
+
+    // Read the form fields the customer submitted before
+    // being redirected to PayPal. The webhook needs them
+    // to build the Account record.
+    const intent = await d.getCheckoutIntent(orderId);
+    if (!intent) {
+        console.error("CAPTURE.COMPLETED: no checkout intent for", orderId,
+            "(webhook fired without a matching pending form, or the form expired)");
+        return;
+    }
+    // The intent is single-use. Delete it now so a re-fire
+    // of the same order doesn't double-record.
+    await d.deleteCheckoutIntent(orderId);
+
     if (!existing) {
-        // Brand-new account. We need a buyer's email to send
-        // the welcome message. If it's missing, fetch the
-        // order from PayPal.
-        let email = buyerEmail;
-        if (!email) {
-            // We can't pull the order here without making
-            // another API call. Log and bail — admin can
-            // recover manually by inserting the account
-            // record into KV.
-            console.error("CAPTURE.COMPLETED: missing buyer email for", orderId);
-            return;
-        }
-        const sitePw = generateSitePassword();
+        // Brand-new account.
         const panelBouquet = d.bouquetToPanelId(custom.bouquet);
         const acct: Account = {
             paypal_order_id: orderId,
@@ -288,23 +306,25 @@ async function handleInitialCapture(
             renewal_order_ids: [orderId],
             pending_renewal_order_id: null,
             pending_renewal_months: null,
-            email: email.toLowerCase(),
+            name: intent.name,
+            email: intent.email,
+            contact: intent.contact,
             panel_user_id: null,
             panel_username: null,
-            panel_password: null,
-            site_password: sitePw,
-            password_auth: await d.hashPassword(sitePw),
+            panel_password_ct: null,
+            password_auth: null,
             plan_months: custom.months,
             bouquet: custom.bouquet,
             panel_bouquet_id: panelBouquet,
             created_at: new Date().toISOString(),
             expires_at: null,
+            last_login_at: null,
+            last_paypal_charge_at: chargeAt,
             status: "pending",
             cancel_at_period_end: false,
         };
         await d.putAccount(acct);
-        // Now create the Gold Panel M3U line.
-        await provisionGoldPanel(d, acct);
+        await provisionGoldPanel(d, acct, env);
         return;
     }
     // Pending account that finally got captured.
@@ -313,15 +333,25 @@ async function handleInitialCapture(
         if (!existing.renewal_order_ids.includes(orderId)) {
             existing.renewal_order_ids.push(orderId);
         }
+        if (chargeAt) existing.last_paypal_charge_at = chargeAt;
+        // Backfill the contact fields if the account was
+        // created in an earlier (pre-rewrite) flow that
+        // didn't capture them.
+        if (!existing.name)  existing.name  = intent.name;
+        if (!existing.email) existing.email = intent.email;
+        if (!existing.contact || (existing.contact.discord === null && existing.contact.telegram === null && existing.contact.reddit === null)) {
+            existing.contact = intent.contact;
+        }
         await d.putAccount(existing);
-        await provisionGoldPanel(d, existing);
+        await provisionGoldPanel(d, existing, env);
         return;
     }
     console.warn("CAPTURE.COMPLETED: account in unexpected state", orderId, existing.status);
 }
 
-async function provisionGoldPanel(d: DispatchDeps, acct: Account): Promise<void> {
+async function provisionGoldPanel(d: DispatchDeps, acct: Account, env: Record<string, unknown>): Promise<void> {
     try {
+        const { encryptSecret } = await import("../_lib/crypto");
         const created = await d.createM3U({
             sub: acct.plan_months,
             pack: acct.panel_bouquet_id,
@@ -330,8 +360,17 @@ async function provisionGoldPanel(d: DispatchDeps, acct: Account): Promise<void>
         });
         acct.panel_user_id    = String(created.user_id);
         acct.panel_username   = created.username;
-        acct.panel_password   = created.password;
+        // Encrypt the panel password at rest. The cleartext
+        // is only ever held in this function scope, used to
+        // (a) build the welcome email, (b) call getDeviceInfo
+        // for the expiry, and (c) feed the PBKDF2 hash for
+        // site login. Never logged.
+        const ct = await encryptSecret(env, String(created.password || ""));
+        acct.panel_password_ct = ct;
         acct.panel_bouquet_id = acct.panel_bouquet_id || d.bouquetToPanelId(acct.bouquet);
+        // The Gold Panel password IS the site login. Hash
+        // it for /api/auth/login.
+        acct.password_auth    = await d.hashPassword(created.password);
         acct.status = "active";
         // Pull the expiry.
         try {
@@ -344,13 +383,15 @@ async function provisionGoldPanel(d: DispatchDeps, acct: Account): Promise<void>
             console.warn("provision: device_info follow-up failed:", (e as Error).message);
         }
         await d.putAccount(acct);
-        // Send the welcome email.
+        // Send the welcome email. The login creds are the
+        // Gold Panel creds (which double as the site login).
         const dnsPrimary   = String((globalThis as any).DNS_PRIMARY   || "https://apex.tfplus.stream");
         const dnsSecondary = String((globalThis as any).DNS_SECONDARY || "http://comet.tfplus.stream");
         const tmpl = d.welcomeEmail({
+            name: acct.name,
             email: acct.email,
             username: created.username,
-            password: acct.site_password,
+            password: created.password,
             dns_primary: dnsPrimary,
             dns_secondary: dnsSecondary,
             xc_server: dnsPrimary,
@@ -372,20 +413,28 @@ async function handleRenewalCapture(
     captureId: string,
     custom: { kind: "renewal"; account_order_id: string; months: 1 | 3 | 6 | 12 },
     _buyerEmail: string,
+    chargeAt: string | null,
 ): Promise<void> {
     const acct = await d.getAccount(custom.account_order_id);
     if (!acct) {
         console.warn("renewal: account", custom.account_order_id, "not found for order", orderId);
         return;
     }
-    if (!acct.panel_username || !acct.panel_password) {
+    if (!acct.panel_username || !acct.panel_password_ct) {
         console.warn("renewal: account", custom.account_order_id, "not yet provisioned");
+        return;
+    }
+    const { decryptPanelPassword } = await import("../_lib/kv");
+    const cleartext = await decryptPanelPassword(d.env, acct);
+    if (!cleartext) {
+        console.error("renewal: account", custom.account_order_id,
+            "has panel_password_ct but cannot decrypt — wrong key?");
         return;
     }
     try {
         await d.renewM3U({
             username: acct.panel_username,
-            password: acct.panel_password,
+            password: cleartext,
             sub: custom.months,
         });
     } catch (e) {
@@ -395,7 +444,7 @@ async function handleRenewalCapture(
     try {
         const info = await d.getDeviceInfo({
             username: acct.panel_username,
-            password: acct.panel_password,
+            password: cleartext,
         });
         acct.expires_at = info.expire || acct.expires_at;
     } catch (e) {
@@ -404,6 +453,7 @@ async function handleRenewalCapture(
     acct.status = "active";
     acct.cancel_at_period_end = false;
     acct.latest_capture_id = captureId || acct.latest_capture_id;
+    if (chargeAt) acct.last_paypal_charge_at = chargeAt;
     if (!acct.renewal_order_ids.includes(orderId)) {
         acct.renewal_order_ids.push(orderId);
     }
@@ -426,13 +476,3 @@ async function handleRenewalCapture(
     console.log("renewal: account", acct.email, "extended by", custom.months, "→", acct.expires_at);
 }
 
-/** Random 12-char site password (alphanumeric). The customer
- *  gets this in the welcome email; they can change it later. */
-function generateSitePassword(): string {
-    const alpha = "abcdefghijkmnpqrstuvwxyz23456789"; // no confusing chars
-    const bytes = new Uint8Array(12);
-    crypto.getRandomValues(bytes);
-    let s = "";
-    for (let i = 0; i < bytes.length; i++) s += alpha[bytes[i] % alpha.length];
-    return s;
-}
