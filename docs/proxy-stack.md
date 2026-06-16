@@ -146,6 +146,35 @@ imports any other URL. The maintainer regenerates the M3U on a
 schedule; the engine re-imports the freshest copy on each `seed`
 call.
 
+**One-shot bulk import:** `engine/scripts/seed-all.sh` runs all 12
+sources + the three EPG imports in a single script, with
+per-source failure isolation and a summary. The 11 BuddyChewChew
+generators + Local Now are imported ACTIVE; the
+`distrotv-proxy` container's M3U is imported as a DISABLED warm
+backup (sits in the DB ready to be enabled, but doesn't serve
+traffic and doesn't get pruned). See
+[engine/scripts/seed-all.sh](../engine/scripts/seed-all.sh) for
+the exact sources + flags.
+
+```bash
+cd /opt/treefrogfree
+bash engine/scripts/seed-all.sh
+```
+
+After the script finishes, run a health cycle so the new streams
+get probed and the dead ones get pruned:
+
+```bash
+docker compose -f engine/docker-compose.yml exec tf-engine python -m engine check-once
+docker compose -f engine/docker-compose.yml exec tf-engine python -m engine prune
+docker compose -f engine/docker-compose.yml exec tf-engine python -m engine publish
+```
+
+The remainder of this section is the per-source recipe for
+operators who'd rather run the imports one at a time (e.g. to
+cherry-pick a subset of sources, or to import a single source
+under a custom `--label`).
+
 Run them all in one block. Skip any source whose label you'd
 rather not have (the engine dedupes, so overlapping sources are
 safe but waste import time).
