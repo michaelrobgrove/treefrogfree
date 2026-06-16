@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thanks &mdash; Tree Frog Plus</title>
+    <meta name="description" content="Your Tree Frog Plus subscription is being set up.">
+    <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: { frog: '#22c55e' } } }
+        }
+    </script>
+    <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body class="bg-gray-900 text-white min-h-screen antialiased selection:bg-frog selection:text-white">
+
+    <nav class="border-b border-gray-800 bg-gray-900/80 backdrop-blur-md sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <a href="/" class="flex items-center gap-2">
+                <img src="/assets/logo.svg" alt="Tree Frog Plus" class="w-8 h-8"/>
+                <span class="font-bold text-xl tracking-tight">Tree Frog <span class="text-frog">Plus</span></span>
+            </a>
+        </div>
+    </nav>
+
+    <main class="max-w-2xl mx-auto px-4 py-12 md:py-20">
+        <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-8 text-center">
+            <div class="relative inline-block mb-6">
+                <span class="absolute inset-0 rounded-full bg-frog/20 tf-pulse-ring"></span>
+                <div class="relative w-16 h-16 rounded-full bg-frog/20 border-2 border-frog flex items-center justify-center text-3xl">&#x1F389;</div>
+            </div>
+
+            <h1 class="text-3xl font-bold mb-2">Payment received</h1>
+            <p class="text-gray-300 mb-6">
+                We're setting up your account. This usually takes under a minute.
+            </p>
+
+            <div id="status" class="bg-gray-900/60 border border-gray-700 rounded-xl p-4 text-sm text-gray-400">
+                <span class="tf-spinner align-middle mr-2"></span>
+                Waiting for the activation webhook to land…
+            </div>
+
+            <p class="text-xs text-gray-500 mt-6">
+                You don't need to stay on this page. We'll email you the moment your
+                account is ready.
+            </p>
+        </div>
+    </main>
+
+    <script src="/assets/app.js"></script>
+    <script>
+        // Poll /api/account/info every 4s. When the account is ready
+        // (email present, credentials present) we redirect to login
+        // with a hint. We don't auto-login; the customer uses the
+        // email + password from the welcome email.
+        (function () {
+            const subId = new URLSearchParams(location.search).get("sub_id");
+            let attempts = 0;
+            const maxAttempts = 30; // ~2 min
+            const status = document.getElementById("status");
+
+            async function tick() {
+                attempts += 1;
+                try {
+                    // Try to get info with the not-yet-existing session.
+                    // It will 401 until activation completes and the
+                    // customer sets a password. We use a different
+                    // poll endpoint that doesn't require auth.
+                    const res = await fetch(
+                        `/api/checkout/status?sub_id=${encodeURIComponent(subId || "")}`,
+                        { credentials: "include" }
+                    );
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.ready) {
+                            status.innerHTML = "Account ready! Redirecting to sign in…";
+                            setTimeout(() => {
+                                window.location.href = "login.html?from=thanks";
+                            }, 1200);
+                            return;
+                        }
+                    }
+                } catch (e) { /* keep polling */ }
+
+                if (attempts < maxAttempts) {
+                    setTimeout(tick, 4000);
+                } else {
+                    status.innerHTML = "Still waiting. Check your email in a couple of minutes — your account will be ready there. If it never arrives, reply to your PayPal receipt and we'll help.";
+                }
+            }
+            tick();
+        })();
+    </script>
+</body>
+</html>

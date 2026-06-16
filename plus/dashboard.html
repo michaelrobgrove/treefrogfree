@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard &mdash; Tree Frog Plus</title>
+    <meta name="description" content="Manage your Tree Frog Plus subscription, renew, cancel, and watch live.">
+    <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: { frog: '#22c55e' } } }
+        }
+    </script>
+    <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body class="bg-gray-900 text-white min-h-screen antialiased selection:bg-frog selection:text-white">
+
+    <nav class="border-b border-gray-800 bg-gray-900/80 backdrop-blur-md sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <a href="/" class="flex items-center gap-2">
+                <img src="/assets/logo.svg" alt="Tree Frog Plus" class="w-8 h-8"/>
+                <span class="font-bold text-xl tracking-tight">Tree Frog <span class="text-frog">Plus</span></span>
+            </a>
+            <div class="flex items-center gap-3">
+                <a href="setup.html" class="text-sm text-gray-300 hover:text-white hidden sm:inline">Setup</a>
+                <a href="https://free.tfplus.stream" class="text-sm text-gray-300 hover:text-white hidden sm:inline">Free Site</a>
+                <button id="logout-btn" type="button"
+                        class="text-sm text-gray-300 hover:text-white tf-focus">Sign out</button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 md:py-12">
+
+        <!-- Loading skeleton; replaced when /api/account/info returns. -->
+        <div id="loading" class="text-center py-20 text-gray-500">Loading your account…</div>
+
+        <div id="content" class="hidden">
+
+            <!-- Status card -->
+            <section class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6 md:p-8 mb-6">
+                <div class="md:flex items-start justify-between gap-6">
+                    <div>
+                        <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Subscription</div>
+                        <h1 class="text-2xl md:text-3xl font-bold mb-1">
+                            <span id="plan-label">&mdash;</span>
+                            <span class="text-gray-500 text-lg font-normal"> &middot; </span>
+                            <span id="bouquet-label" class="text-frog">&mdash;</span>
+                        </h1>
+                        <p class="text-gray-400 text-sm">
+                            <span id="status-text">Active</span>
+                            &middot; Renews <span id="next-billing">&mdash;</span>
+                        </p>
+                    </div>
+                    <div class="mt-4 md:mt-0 text-left md:text-right">
+                        <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Expires</div>
+                        <div id="expires-at" class="text-2xl font-bold">&mdash;</div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-6">
+                    <button type="button" data-action="open-player"
+                            class="bg-frog hover:bg-green-500 text-gray-900 font-semibold px-5 py-3 rounded-lg transition-colors tf-focus">
+                        &#x25B6; Open web player
+                    </button>
+                    <div class="relative">
+                        <button id="renew-btn" type="button"
+                                class="w-full bg-gray-800 hover:bg-gray-700 text-white font-semibold px-5 py-3 rounded-lg transition-colors tf-focus">
+                            + Renew months &darr;
+                        </button>
+                        <div id="renew-menu"
+                             class="hidden absolute z-10 mt-2 right-0 bg-gray-800 border border-gray-700 rounded-lg shadow-lg overflow-hidden">
+                            <button type="button" data-months="1"  class="renew-opt block w-full text-left px-4 py-2 hover:bg-gray-700 text-sm">+1 month</button>
+                            <button type="button" data-months="3"  class="renew-opt block w-full text-left px-4 py-2 hover:bg-gray-700 text-sm">+3 months</button>
+                            <button type="button" data-months="6"  class="renew-opt block w-full text-left px-4 py-2 hover:bg-gray-700 text-sm">+6 months</button>
+                            <button type="button" data-months="12" class="renew-opt block w-full text-left px-4 py-2 hover:bg-gray-700 text-sm">+12 months</button>
+                        </div>
+                    </div>
+                    <button id="cancel-btn" type="button"
+                            class="bg-gray-800 hover:bg-red-900/40 text-red-300 hover:text-red-200 font-semibold px-5 py-3 rounded-lg transition-colors tf-focus">
+                        Cancel subscription
+                    </button>
+                </div>
+
+                <div id="cancel-banner" class="hidden mt-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-3 text-sm text-yellow-200">
+                    <strong>Cancellation scheduled.</strong> Your service runs until <span id="cancel-banner-date">&mdash;</span>. No refund, no further charges.
+                </div>
+            </section>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+
+                <!-- XC credentials (for IPTV apps) -->
+                <section class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6">
+                    <h2 class="text-lg font-semibold mb-1">IPTV app login</h2>
+                    <p class="text-sm text-gray-400 mb-4">Use these in IPTV Smarters, TiviMate, or any XC-compatible app.</p>
+
+                    <div class="space-y-3">
+                        <div>
+                            <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Server (DNS)</div>
+                            <div class="flex items-center gap-2">
+                                <code id="xc-server" class="flex-1 tf-code text-xs break-all">&mdash;</code>
+                                <button type="button" data-copy="" data-copy-target="xc-server"
+                                        class="tf-copy bg-gray-800 hover:bg-gray-700 text-xs px-3 py-1.5 rounded-md tf-focus">Copy</button>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Username</div>
+                            <div class="flex items-center gap-2">
+                                <code id="xc-username" class="flex-1 tf-code text-xs break-all">&mdash;</code>
+                                <button type="button" data-copy="" data-copy-target="xc-username"
+                                        class="tf-copy bg-gray-800 hover:bg-gray-700 text-xs px-3 py-1.5 rounded-md tf-focus">Copy</button>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Password</div>
+                            <div class="flex items-center gap-2">
+                                <code id="xc-password" class="flex-1 tf-code text-xs break-all">&mdash;</code>
+                                <button type="button" data-copy="" data-copy-target="xc-password"
+                                        class="tf-copy bg-gray-800 hover:bg-gray-700 text-xs px-3 py-1.5 rounded-md tf-focus">Copy</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <p class="text-xs text-gray-500 mt-4">
+                        Need a step-by-step? See the <a href="setup.html" class="text-frog hover:underline">setup guide</a>.
+                    </p>
+                </section>
+
+                <!-- DNS endpoints -->
+                <section class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6">
+                    <h2 class="text-lg font-semibold mb-1">DNS endpoints</h2>
+                    <p class="text-sm text-gray-400 mb-4">Both point at the same channels. The first is preferred; the second is the failover.</p>
+
+                    <div class="space-y-3">
+                        <div>
+                            <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Primary</div>
+                            <div class="flex items-center gap-2">
+                                <code id="dns-primary" class="flex-1 tf-code text-xs break-all">&mdash;</code>
+                                <button type="button" data-copy="" data-copy-target="dns-primary"
+                                        class="tf-copy bg-gray-800 hover:bg-gray-700 text-xs px-3 py-1.5 rounded-md tf-focus">Copy</button>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Failover</div>
+                            <div class="flex items-center gap-2">
+                                <code id="dns-secondary" class="flex-1 tf-code text-xs break-all">&mdash;</code>
+                                <button type="button" data-copy="" data-copy-target="dns-secondary"
+                                        class="tf-copy bg-gray-800 hover:bg-gray-700 text-xs px-3 py-1.5 rounded-md tf-focus">Copy</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <p class="text-xs text-gray-500 mt-4">
+                        If the primary feels slow, your app will usually fall over automatically &mdash; but you can also enter the secondary manually.
+                    </p>
+                </section>
+            </div>
+
+            <!-- Account info -->
+            <section class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6 mb-6">
+                <h2 class="text-lg font-semibold mb-3">Account</h2>
+                <dl class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    <div>
+                        <dt class="text-gray-400">Email</dt>
+                        <dd id="acct-email" class="font-mono">&mdash;</dd>
+                    </div>
+                    <div>
+                        <dt class="text-gray-400">Subscription ID</dt>
+                        <dd id="acct-subid" class="font-mono text-xs break-all">&mdash;</dd>
+                    </div>
+                </dl>
+            </section>
+        </div>
+    </main>
+
+    <!-- Cancel confirmation -->
+    <dialog id="cancel-modal" class="bg-gray-800 border border-gray-700 rounded-2xl p-6 max-w-md w-full text-white">
+        <h2 class="text-xl font-bold mb-2">Cancel subscription?</h2>
+        <p class="text-sm text-gray-300 mb-6">
+            Your service runs until <span id="cancel-modal-date" class="font-semibold text-white">&mdash;</span>.
+            We won't charge you again, and there are no refunds. You can re-subscribe anytime.
+        </p>
+        <div class="flex gap-3 justify-end">
+            <button id="cancel-modal-close" type="button"
+                    class="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-sm font-semibold tf-focus">
+                Keep subscription
+            </button>
+            <button id="cancel-modal-confirm" type="button"
+                    class="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-semibold tf-focus">
+                Cancel at period end
+            </button>
+        </div>
+    </dialog>
+
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.0" crossorigin="anonymous"></script>
+    <script src="/assets/app.js"></script>
+    <script src="/assets/player.js"></script>
+    <script>
+        (async function () {
+            const loading = document.getElementById("loading");
+            const content = document.getElementById("content");
+
+            let me;
+            try {
+                me = await window.tf.api("/api/account/info");
+            } catch (e) {
+                if (e.status === 401) {
+                    window.location.href = "login.html";
+                    return;
+                }
+                loading.textContent = e.message || "Could not load account.";
+                return;
+            }
+            loading.classList.add("hidden");
+            content.classList.remove("hidden");
+
+            const BOUQUET_LABELS = {
+                "us":          "US",
+                "us_adult":    "US + Adult",
+                "us_ca":       "US & Canada",
+                "us_ca_adult": "US & Canada + Adult",
+            };
+
+            // Populate fields.
+            document.getElementById("plan-label").textContent    = `${me.plan_months} months`;
+            document.getElementById("bouquet-label").textContent = BOUQUET_LABELS[me.bouquet] || me.bouquet;
+            document.getElementById("expires-at").textContent    = window.tf.formatDate(me.expires_at);
+            document.getElementById("next-billing").textContent  = window.tf.formatDate(me.next_billing_at);
+            document.getElementById("status-text").textContent   = me.status || "Active";
+
+            document.getElementById("xc-server").textContent   = me.xc_server || "—";
+            document.getElementById("xc-username").textContent = me.username   || "—";
+            document.getElementById("xc-password").textContent = me.password   || "—";
+            document.getElementById("dns-primary").textContent   = me.dns_primary   || "—";
+            document.getElementById("dns-secondary").textContent = me.dns_secondary || "—";
+
+            document.getElementById("acct-email").textContent = me.email || "—";
+            document.getElementById("acct-subid").textContent = me.subscription_id || "—";
+
+            // Wire copy buttons that target a specific element by ID.
+            document.querySelectorAll("[data-copy-target]").forEach((btn) => {
+                const target = document.getElementById(btn.getAttribute("data-copy-target"));
+                if (target) btn.setAttribute("data-copy", target.textContent.trim());
+            });
+            window.tf.bindCopyButtons();
+
+            // Cancel-at-period-end banner.
+            if (me.cancel_at_period_end) {
+                const banner = document.getElementById("cancel-banner");
+                banner.classList.remove("hidden");
+                document.getElementById("cancel-banner-date").textContent =
+                    window.tf.formatDate(me.expires_at);
+                document.getElementById("cancel-btn").disabled = true;
+                document.getElementById("cancel-btn").textContent = "Cancellation scheduled";
+                document.getElementById("cancel-btn").classList.add("opacity-60", "cursor-not-allowed");
+            }
+
+            // Cancel modal.
+            const cancelBtn     = document.getElementById("cancel-btn");
+            const cancelModal   = document.getElementById("cancel-modal");
+            const cancelClose   = document.getElementById("cancel-modal-close");
+            const cancelConfirm = document.getElementById("cancel-modal-confirm");
+            const cancelDate    = document.getElementById("cancel-modal-date");
+            if (!me.cancel_at_period_end) {
+                cancelDate.textContent = window.tf.formatDate(me.expires_at);
+                cancelBtn.addEventListener("click", () => cancelModal.showModal());
+                cancelClose.addEventListener("click", () => cancelModal.close());
+                cancelConfirm.addEventListener("click", async () => {
+                    cancelConfirm.disabled = true;
+                    cancelConfirm.textContent = "Working…";
+                    try {
+                        await window.tf.api("/api/account/cancel", { method: "POST" });
+                        cancelModal.close();
+                        window.tf.toast("Cancellation scheduled.", "success");
+                        setTimeout(() => window.location.reload(), 800);
+                    } catch (e) {
+                        window.tf.toast(e.message || "Could not cancel.", "error");
+                        cancelConfirm.disabled = false;
+                        cancelConfirm.textContent = "Cancel at period end";
+                    }
+                });
+            }
+
+            // Renew menu.
+            const renewBtn  = document.getElementById("renew-btn");
+            const renewMenu = document.getElementById("renew-menu");
+            renewBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                renewMenu.classList.toggle("hidden");
+            });
+            document.addEventListener("click", () => renewMenu.classList.add("hidden"));
+            document.querySelectorAll(".renew-opt").forEach((opt) => {
+                opt.addEventListener("click", async (e) => {
+                    e.stopPropagation();
+                    renewMenu.classList.add("hidden");
+                    const months = parseInt(opt.getAttribute("data-months"), 10);
+                    renewBtn.disabled = true;
+                    renewBtn.innerHTML = '<span class="tf-spinner"></span> Working…';
+                    try {
+                        const res = await window.tf.api("/api/account/renew", {
+                            method: "POST",
+                            body: { months },
+                        });
+                        window.tf.toast(`Extended by ${months} months. New expiry: ${window.tf.formatDate(res.expires_at)}`, "success");
+                        setTimeout(() => window.location.reload(), 1200);
+                    } catch (e) {
+                        window.tf.toast(e.message || "Could not renew.", "error");
+                        renewBtn.disabled = false;
+                        renewBtn.textContent = "+ Renew months ↓";
+                    }
+                });
+            });
+
+            // Logout.
+            document.getElementById("logout-btn").addEventListener("click", async () => {
+                try { await window.tf.api("/api/auth/logout", { method: "POST" }); }
+                catch (e) { /* ignore */ }
+                window.location.href = "login.html";
+            });
+        })();
+    </script>
+</body>
+</html>

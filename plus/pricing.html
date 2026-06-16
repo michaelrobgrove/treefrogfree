@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pricing &mdash; Tree Frog Plus</title>
+    <meta name="description" content="Pick a plan and a bouquet. 3 plans, 4 bouquet choices, no contracts.">
+    <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: { frog: '#22c55e' } } }
+        }
+    </script>
+    <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body class="bg-gray-900 text-white min-h-screen antialiased selection:bg-frog selection:text-white">
+
+    <nav class="border-b border-gray-800 bg-gray-900/80 backdrop-blur-md sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <a href="/" class="flex items-center gap-2">
+                <img src="/assets/logo.svg" alt="Tree Frog Plus" class="w-8 h-8"/>
+                <span class="font-bold text-xl tracking-tight">Tree Frog <span class="text-frog">Plus</span></span>
+            </a>
+            <div class="flex items-center gap-3">
+                <a href="setup.html" class="text-sm text-gray-300 hover:text-white hidden sm:inline">Setup</a>
+                <a href="https://free.tfplus.stream" class="text-sm text-gray-300 hover:text-white hidden sm:inline">Free Site</a>
+                <a href="login.html" class="text-sm text-gray-300 hover:text-white">Sign in</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12 md:py-16">
+
+        <header class="text-center mb-12">
+            <h1 class="text-3xl md:text-4xl font-bold mb-3">Pick a plan &amp; bouquet</h1>
+            <p class="text-gray-400">Three plans, four bouquets. Subscribe with PayPal &mdash; you can cancel anytime.</p>
+        </header>
+
+        <!-- Plan length (segmented) -->
+        <section class="mb-10">
+            <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 text-center">Plan length</h2>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3" id="plans-grid">
+                <button type="button" data-plan="3" data-price="36"
+                        class="plan-btn tf-card bg-gray-800/60 border-2 border-gray-700 rounded-2xl p-6 text-center tf-focus">
+                    <div class="text-sm text-gray-400 mb-1">3 months</div>
+                    <div class="text-3xl font-bold">$36</div>
+                    <div class="text-xs text-gray-500 mt-1">$12 / month</div>
+                </button>
+                <button type="button" data-plan="6" data-price="60"
+                        class="plan-btn tf-card bg-gray-800/60 border-2 border-gray-700 rounded-2xl p-6 text-center tf-focus">
+                    <div class="inline-block text-xs bg-frog/10 text-frog font-semibold uppercase tracking-wider px-2 py-0.5 rounded mb-1">Save $12</div>
+                    <div class="text-3xl font-bold">$60</div>
+                    <div class="text-xs text-gray-500 mt-1">$10 / month</div>
+                </button>
+                <button type="button" data-plan="12" data-price="120"
+                        class="plan-btn tf-card bg-gray-800/60 border-2 border-frog rounded-2xl p-6 text-center tf-focus relative">
+                    <div class="inline-block text-xs bg-frog text-gray-900 font-semibold uppercase tracking-wider px-2 py-0.5 rounded mb-1">Best value</div>
+                    <div class="text-3xl font-bold">$120</div>
+                    <div class="text-xs text-gray-500 mt-1">$10 / month</div>
+                </button>
+            </div>
+        </section>
+
+        <!-- Bouquet (radio cards) -->
+        <section class="mb-10">
+            <h2 class="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3 text-center">Bouquet</h2>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3" id="bouquets-grid">
+                <label class="bouquet-btn tf-card bg-gray-800/60 border-2 border-gray-700 rounded-2xl p-5 cursor-pointer tf-focus">
+                    <input type="radio" name="bouquet" value="us" class="sr-only"/>
+                    <div class="flex items-start gap-3">
+                        <div class="text-2xl">&#x1F1FA;&#x1F1F8;</div>
+                        <div class="flex-1">
+                            <div class="font-semibold">US</div>
+                            <div class="text-sm text-gray-400 mt-1">United States channels, no adult.</div>
+                        </div>
+                    </div>
+                </label>
+                <label class="bouquet-btn tf-card bg-gray-800/60 border-2 border-gray-700 rounded-2xl p-5 cursor-pointer tf-focus">
+                    <input type="radio" name="bouquet" value="us_adult" class="sr-only"/>
+                    <div class="flex items-start gap-3">
+                        <div class="text-2xl">&#x1F1FA;&#x1F1F8; <span class="text-xs">18+</span></div>
+                        <div class="flex-1">
+                            <div class="font-semibold">US + Adult</div>
+                            <div class="text-sm text-gray-400 mt-1">United States channels, adult included.</div>
+                        </div>
+                    </div>
+                </label>
+                <label class="bouquet-btn tf-card bg-gray-800/60 border-2 border-gray-700 rounded-2xl p-5 cursor-pointer tf-focus">
+                    <input type="radio" name="bouquet" value="us_ca" class="sr-only"/>
+                    <div class="flex items-start gap-3">
+                        <div class="text-2xl">&#x1F1FA;&#x1F1F8;&#x1F1E8;&#x1F1E6;</div>
+                        <div class="flex-1">
+                            <div class="font-semibold">US &amp; Canada</div>
+                            <div class="text-sm text-gray-400 mt-1">US and Canadian channels, no adult.</div>
+                        </div>
+                    </div>
+                </label>
+                <label class="bouquet-btn tf-card bg-gray-800/60 border-2 border-gray-700 rounded-2xl p-5 cursor-pointer tf-focus">
+                    <input type="radio" name="bouquet" value="us_ca_adult" class="sr-only"/>
+                    <div class="flex items-start gap-3">
+                        <div class="text-2xl">&#x1F1FA;&#x1F1F8;&#x1F1E8;&#x1F1E6; <span class="text-xs">18+</span></div>
+                        <div class="flex-1">
+                            <div class="font-semibold">US &amp; Canada + Adult</div>
+                            <div class="text-sm text-gray-400 mt-1">US and Canadian channels, adult included.</div>
+                        </div>
+                    </div>
+                </label>
+            </div>
+        </section>
+
+        <!-- Summary + checkout -->
+        <section class="max-w-xl mx-auto">
+            <div class="bg-gray-800 border border-gray-700 rounded-2xl p-6">
+                <div class="flex items-center justify-between mb-2 text-sm">
+                    <span class="text-gray-400">Plan</span>
+                    <span id="sum-plan" class="font-semibold">&mdash;</span>
+                </div>
+                <div class="flex items-center justify-between mb-2 text-sm">
+                    <span class="text-gray-400">Bouquet</span>
+                    <span id="sum-bouquet" class="font-semibold">&mdash;</span>
+                </div>
+                <div class="border-t border-gray-700 my-3"></div>
+                <div class="flex items-center justify-between mb-5">
+                    <span class="text-gray-300">Total today</span>
+                    <span id="sum-price" class="text-2xl font-bold text-frog">&mdash;</span>
+                </div>
+
+                <button id="checkout-btn" type="button" disabled
+                        class="w-full bg-frog hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-gray-900 font-semibold px-6 py-3 rounded-lg transition-colors tf-focus">
+                    Continue to PayPal
+                </button>
+                <p class="text-xs text-gray-500 text-center mt-3">
+                    PayPal auto-bills at the same rate on the same date each period.
+                    Cancel anytime from your dashboard &mdash; no refunds.
+                </p>
+            </div>
+        </section>
+
+        <!-- FAQ -->
+        <section class="mt-16 max-w-2xl mx-auto">
+            <h2 class="text-2xl font-bold mb-6 text-center">FAQ</h2>
+            <div class="space-y-4">
+                <details class="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
+                    <summary class="font-semibold cursor-pointer tf-focus">What happens after I subscribe?</summary>
+                    <p class="text-sm text-gray-400 mt-2">PayPal confirms the first payment, we spin up your account on our end, and email you the username, password, and DNS endpoints. You can be watching within a couple of minutes.</p>
+                </details>
+                <details class="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
+                    <summary class="font-semibold cursor-pointer tf-focus">Can I cancel?</summary>
+                    <p class="text-sm text-gray-400 mt-2">Anytime, from your dashboard. The service runs to the end of the period you paid for. No refunds, no questions.</p>
+                </details>
+                <details class="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
+                    <summary class="font-semibold cursor-pointer tf-focus">How many devices can connect?</summary>
+                    <p class="text-sm text-gray-400 mt-2">One at a time, per account. If you want concurrent streams, sign up a second account.</p>
+                </details>
+                <details class="bg-gray-800/60 border border-gray-700 rounded-xl p-4">
+                    <summary class="font-semibold cursor-pointer tf-focus">Do I need to use PayPal?</summary>
+                    <p class="text-sm text-gray-400 mt-2">For v1, yes &mdash; PayPal handles the billing and the auto-renewal. We can add more options later.</p>
+                </details>
+            </div>
+        </section>
+    </main>
+
+    <footer class="border-t border-gray-800 mt-16">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-sm text-gray-500 flex flex-col md:flex-row items-center justify-between gap-3">
+            <div>&copy; Tree Frog Plus.</div>
+            <div class="flex items-center gap-4">
+                <a href="https://free.tfplus.stream" class="hover:text-white transition-colors">Free Site</a>
+                <a href="login.html" class="hover:text-white transition-colors">Sign in</a>
+                <a href="setup.html" class="hover:text-white transition-colors">Setup</a>
+            </div>
+        </div>
+    </footer>
+
+    <script src="/assets/app.js"></script>
+    <script>
+        (function () {
+            const BOUQUET_LABELS = {
+                "us":         "US",
+                "us_adult":   "US + Adult",
+                "us_ca":      "US & Canada",
+                "us_ca_adult": "US & Canada + Adult",
+            };
+
+            let selectedPlan = 12; // default: best value
+            let selectedBouquet = null;
+
+            const planBtns    = document.querySelectorAll(".plan-btn");
+            const bouquetBtns = document.querySelectorAll(".bouquet-btn");
+            const sumPlan     = document.getElementById("sum-plan");
+            const sumBouquet  = document.getElementById("sum-bouquet");
+            const sumPrice    = document.getElementById("sum-price");
+            const checkoutBtn = document.getElementById("checkout-btn");
+
+            function update() {
+                planBtns.forEach((b) => {
+                    const isSel = parseInt(b.dataset.plan, 10) === selectedPlan;
+                    b.classList.toggle("border-frog", isSel);
+                    b.classList.toggle("border-gray-700", !isSel);
+                });
+                bouquetBtns.forEach((b) => {
+                    const input = b.querySelector("input");
+                    const isSel = input && input.value === selectedBouquet;
+                    b.classList.toggle("border-frog", !!isSel);
+                    b.classList.toggle("border-gray-700", !isSel);
+                });
+                const price = selectedPlan
+                    ? (selectedPlan === 3 ? 36 : selectedPlan === 6 ? 60 : 120)
+                    : null;
+                sumPlan.textContent    = selectedPlan ? `${selectedPlan} months` : "—";
+                sumBouquet.textContent = selectedBouquet ? BOUQUET_LABELS[selectedBouquet] : "—";
+                sumPrice.textContent   = price != null ? `$${price}` : "—";
+                checkoutBtn.disabled   = !(selectedPlan && selectedBouquet);
+            }
+
+            planBtns.forEach((btn) => {
+                btn.addEventListener("click", () => {
+                    selectedPlan = parseInt(btn.dataset.plan, 10);
+                    update();
+                });
+            });
+            bouquetBtns.forEach((label) => {
+                const input = label.querySelector("input");
+                label.addEventListener("click", () => {
+                    if (!input) return;
+                    selectedBouquet = input.value;
+                    input.checked = true;
+                    update();
+                });
+            });
+
+            // Defaults: 12mo + first bouquet pre-selected for fastest UX.
+            const firstBouquet = document.querySelector('input[name="bouquet"]');
+            if (firstBouquet) {
+                firstBouquet.checked = true;
+                selectedBouquet = firstBouquet.value;
+            }
+            update();
+
+            checkoutBtn.addEventListener("click", async () => {
+                if (!(selectedPlan && selectedBouquet)) return;
+                checkoutBtn.disabled = true;
+                const original = checkoutBtn.textContent;
+                checkoutBtn.innerHTML = '<span class="tf-spinner"></span> Redirecting to PayPal…';
+                try {
+                    const data = await window.tf.api("/api/checkout", {
+                        method: "POST",
+                        body: { plan_months: selectedPlan, bouquet: selectedBouquet },
+                    });
+                    if (!data.approval_url) throw new Error("No approval URL returned.");
+                    window.location.href = data.approval_url;
+                } catch (e) {
+                    window.tf.toast(e.message || "Could not start checkout.", "error");
+                    checkoutBtn.disabled = false;
+                    checkoutBtn.textContent = original;
+                }
+            });
+        })();
+    </script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="frogGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4ade80"/>
+      <stop offset="100%" stop-color="#16a34a"/>
+    </linearGradient>
+  </defs>
+  <!-- Frog body -->
+  <ellipse cx="32" cy="42" rx="22" ry="16" fill="url(#frogGrad)"/>
+  <!-- Eye bumps -->
+  <circle cx="22" cy="24" r="10" fill="url(#frogGrad)"/>
+  <circle cx="42" cy="24" r="10" fill="url(#frogGrad)"/>
+  <!-- Eye whites -->
+  <circle cx="22" cy="24" r="6" fill="#ffffff"/>
+  <circle cx="42" cy="24" r="6" fill="#ffffff"/>
+  <!-- Pupils -->
+  <circle cx="22" cy="24" r="3" fill="#111827"/>
+  <circle cx="42" cy="24" r="3" fill="#111827"/>
+  <!-- Pupil highlights -->
+  <circle cx="23" cy="23" r="0.9" fill="#ffffff"/>
+  <circle cx="43" cy="23" r="0.9" fill="#ffffff"/>
+  <!-- Smile -->
+  <path d="M16 44 Q32 56 48 44" stroke="#0f172a" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <!-- Nostrils -->
+  <circle cx="28" cy="38" r="0.8" fill="#0f172a"/>
+  <circle cx="36" cy="38" r="0.8" fill="#0f172a"/>
+</svg>

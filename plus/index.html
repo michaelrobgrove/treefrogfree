@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tree Frog Plus — Coming Soon</title>
-    <meta name="description" content="Tree Frog Plus is being rebuilt. More channels, better reliability, premium EPG — coming soon.">
+    <title>Tree Frog Plus — Premium IPTV</title>
+    <meta name="description" content="Premium IPTV service. 10,000+ channels, geo-located servers, and automatic failover. Subscribe and start watching in minutes.">
+    <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -12,153 +13,182 @@
             theme: { extend: { colors: { frog: '#22c55e' } } }
         }
     </script>
-    <link rel="icon" href="https://free.tfplus.stream/assets/frog.svg" type="image/svg+xml">
-    <style>
-        body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-        @keyframes tf-float {
-            0%, 100% { transform: translateY(0); }
-            50%      { transform: translateY(-8px); }
-        }
-        .tf-float { animation: tf-float 4s ease-in-out infinite; }
-        @keyframes tf-pulse-ring {
-            0%   { transform: scale(0.95); opacity: 0.6; }
-            70%  { transform: scale(1.4);  opacity: 0;   }
-            100% { transform: scale(1.4);  opacity: 0;   }
-        }
-        .tf-pulse-ring { animation: tf-pulse-ring 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-    </style>
+    <link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body class="bg-gray-900 text-white min-h-screen antialiased selection:bg-frog selection:text-white">
 
     <nav class="border-b border-gray-800 bg-gray-900/80 backdrop-blur-md sticky top-0 z-50">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <a href="/" class="flex items-center gap-2">
-                <span class="text-2xl">🐸</span>
+                <img src="/assets/logo.svg" alt="Tree Frog Plus" class="w-8 h-8"/>
                 <span class="font-bold text-xl tracking-tight">Tree Frog <span class="text-frog">Plus</span></span>
             </a>
             <div class="flex items-center gap-3">
-                <a href="https://free.tfplus.stream" class="text-sm text-gray-300 hover:text-white hidden sm:inline">Free Streams</a>
-                <a href="https://free.tfplus.stream" class="bg-frog hover:bg-green-500 text-gray-900 text-sm font-semibold px-4 py-2 rounded-lg transition-colors">
-                    Try Free Site
+                <a href="setup.html" class="text-sm text-gray-300 hover:text-white hidden sm:inline">Setup</a>
+                <a href="https://free.tfplus.stream" class="text-sm text-gray-300 hover:text-white hidden sm:inline">Free Site</a>
+                <a href="login.html" class="text-sm text-gray-300 hover:text-white">Sign in</a>
+                <a href="pricing.html"
+                   class="bg-frog hover:bg-green-500 text-gray-900 text-sm font-semibold px-4 py-2 rounded-lg transition-colors tf-focus">
+                    Get started
                 </a>
             </div>
         </div>
     </nav>
 
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 md:py-28">
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 
         <!-- Hero -->
-        <div class="text-center max-w-3xl mx-auto">
-            <div class="relative inline-block mb-8">
-                <span class="absolute inset-0 rounded-full bg-frog/20 tf-pulse-ring"></span>
-                <span class="absolute inset-0 rounded-full bg-frog/20 tf-pulse-ring" style="animation-delay: 1.2s;"></span>
-                <span class="relative inline-block text-7xl md:text-8xl tf-float">🐸</span>
-            </div>
-
-            <div class="inline-flex items-center gap-2 bg-frog/10 border border-frog/30 text-frog text-xs font-semibold uppercase tracking-wider px-3 py-1.5 rounded-full mb-6">
-                <span class="w-1.5 h-1.5 rounded-full bg-frog"></span>
-                Coming Soon
-            </div>
-
-            <h1 class="text-4xl md:text-6xl font-extrabold tracking-tight mb-6">
-                Tree Frog <span class="text-frog">Plus</span> is getting<br class="hidden sm:block"> a fresh coat of paint.
-            </h1>
-
-            <p class="text-gray-400 text-lg md:text-xl max-w-2xl mx-auto mb-10">
-                More channels, better reliability, premium EPG, and a brand-new web player.
-                We're rebuilding the whole thing — the old site is being retired while we get it right.
-            </p>
-
-            <div class="flex flex-col sm:flex-row gap-3 justify-center">
-                <a href="https://free.tfplus.stream"
-                   class="inline-block bg-frog hover:bg-green-500 text-gray-900 font-semibold px-6 py-3 rounded-lg transition-colors">
-                    Use the Free Site in the Meantime →
-                </a>
-                <a href="#whats-coming"
-                   class="inline-block bg-gray-800 hover:bg-gray-700 text-white font-semibold px-6 py-3 rounded-lg transition-colors">
-                    See What's Coming
-                </a>
-            </div>
-        </div>
-
-        <!-- What's coming -->
-        <section id="whats-coming" class="mt-24 md:mt-32 scroll-mt-20">
-            <div class="text-center mb-12">
-                <h2 class="text-3xl md:text-4xl font-bold mb-3">What's in the works</h2>
-                <p class="text-gray-400">A few of the things landing when the new site goes live.</p>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6">
-                    <div class="text-3xl mb-3">📺</div>
-                    <h3 class="text-lg font-semibold mb-2">More Channels</h3>
-                    <p class="text-gray-400 text-sm">A wider lineup than the free site — premium networks, regional sports, and international feeds.</p>
+        <section class="py-20 md:py-28">
+            <div class="text-center max-w-3xl mx-auto">
+                <div class="relative inline-block mb-8">
+                    <span class="absolute inset-0 rounded-full bg-frog/20 tf-pulse-ring"></span>
+                    <span class="absolute inset-0 rounded-full bg-frog/20 tf-pulse-ring" style="animation-delay: 1.2s;"></span>
+                    <img src="/assets/logo.svg" alt="" class="relative inline-block w-20 h-20 md:w-24 md:h-24 tf-float"/>
                 </div>
-                <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6">
-                    <div class="text-3xl mb-3">⚡</div>
-                    <h3 class="text-lg font-semibold mb-2">Better Reliability</h3>
-                    <p class="text-gray-400 text-sm">Multiple backup sources per channel, automatic failover, and a 30-minute health check on every stream.</p>
+
+                <div class="inline-flex items-center gap-2 bg-frog/10 border border-frog/30 text-frog text-xs font-semibold uppercase tracking-wider px-3 py-1.5 rounded-full mb-6">
+                    <span class="w-1.5 h-1.5 rounded-full bg-frog"></span>
+                    Now in beta
                 </div>
-                <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6">
-                    <div class="text-3xl mb-3">📡</div>
-                    <h3 class="text-lg font-semibold mb-2">Premium EPG</h3>
-                    <p class="text-gray-400 text-sm">Full 7-day program guide, "on now" and "up next" inline, and richer show detail on every channel.</p>
-                </div>
-                <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6">
-                    <div class="text-3xl mb-3">🎬</div>
-                    <h3 class="text-lg font-semibold mb-2">In-Browser Player</h3>
-                    <p class="text-gray-400 text-sm">Watch live TV right on the site — no VLC, no TiviMate, just click and play in any modern browser.</p>
-                </div>
-                <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6">
-                    <div class="text-3xl mb-3">🔍</div>
-                    <h3 class="text-lg font-semibold mb-2">Smarter Search</h3>
-                    <p class="text-gray-400 text-sm">Search by name, category, call sign, or what's on right now. Filters that actually work the way you'd expect.</p>
-                </div>
-                <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6">
-                    <div class="text-3xl mb-3">📥</div>
-                    <h3 class="text-lg font-semibold mb-2">Clean M3U</h3>
-                    <p class="text-gray-400 text-sm">A deduplicated, de-regionized M3U that drops straight into any IPTV player. No garbage channels.</p>
+
+                <h1 class="text-4xl md:text-6xl font-extrabold tracking-tight mb-6">
+                    Premium IPTV.<br/>
+                    <span class="text-frog">Built for reliability.</span>
+                </h1>
+
+                <p class="text-gray-400 text-lg md:text-xl max-w-2xl mx-auto mb-10">
+                    10,000+ channels, geo-located servers, and a redundant
+                    network that picks up the slack if a server drops &mdash;
+                    usually in under a minute.
+                </p>
+
+                <div class="flex flex-col sm:flex-row gap-3 justify-center">
+                    <a href="pricing.html"
+                       class="inline-block bg-frog hover:bg-green-500 text-gray-900 font-semibold px-6 py-3 rounded-lg transition-colors tf-focus">
+                        See pricing &rarr;
+                    </a>
+                    <a href="setup.html"
+                       class="inline-block bg-gray-800 hover:bg-gray-700 text-white font-semibold px-6 py-3 rounded-lg transition-colors tf-focus">
+                        Setup guides
+                    </a>
                 </div>
             </div>
         </section>
 
-        <!-- Status / progress -->
-        <section class="mt-24 md:mt-32">
-            <div class="bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-2xl p-8 md:p-12 text-center max-w-3xl mx-auto">
-                <div class="text-4xl mb-4">🚧</div>
-                <h3 class="text-2xl font-bold mb-3">Under Construction</h3>
-                <p class="text-gray-400 mb-6 max-w-xl mx-auto">
-                    The free site at <a href="https://free.tfplus.stream" class="text-frog hover:underline">free.tfplus.stream</a>
-                    is live and working great — it runs the same engine. Plus will be the premium experience on top of it.
-                </p>
-                <div class="inline-flex flex-col sm:flex-row gap-2 text-sm text-gray-500">
-                    <span>Last update: <span class="text-gray-300" id="last-updated">—</span></span>
-                    <span class="hidden sm:inline">·</span>
-                    <span>No signup required to be notified</span>
+        <!-- Stat strip -->
+        <section class="pb-12">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-4xl mx-auto">
+                <div class="bg-gray-800/60 border border-gray-700 rounded-xl p-4 text-center">
+                    <div class="text-2xl md:text-3xl font-bold text-frog">10K+</div>
+                    <div class="text-xs text-gray-400 mt-1">Live channels</div>
                 </div>
+                <div class="bg-gray-800/60 border border-gray-700 rounded-xl p-4 text-center">
+                    <div class="text-2xl md:text-3xl font-bold text-frog">&lt;1 min</div>
+                    <div class="text-xs text-gray-400 mt-1">Failover</div>
+                </div>
+                <div class="bg-gray-800/60 border border-gray-700 rounded-xl p-4 text-center">
+                    <div class="text-2xl md:text-3xl font-bold text-frog">4</div>
+                    <div class="text-xs text-gray-400 mt-1">Bouquet choices</div>
+                </div>
+                <div class="bg-gray-800/60 border border-gray-700 rounded-xl p-4 text-center">
+                    <div class="text-2xl md:text-3xl font-bold text-frog">1</div>
+                    <div class="text-xs text-gray-400 mt-1">Connection / account</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Feature grid -->
+        <section class="py-12 md:py-16">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl md:text-4xl font-bold mb-3">Why Tree Frog Plus</h2>
+                <p class="text-gray-400">The same engine as the free site, with the redundancy and lineup to match.</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6 tf-card">
+                    <div class="text-3xl mb-3">&#x1F30D;</div>
+                    <h3 class="text-lg font-semibold mb-2">Geo-located servers</h3>
+                    <p class="text-gray-400 text-sm">We run points-of-presence on multiple continents. Your stream hits the closest one, so latency stays low and quality stays high.</p>
+                </div>
+                <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6 tf-card">
+                    <div class="text-3xl mb-3">&#x26A1;</div>
+                    <h3 class="text-lg font-semibold mb-2">Automatic failover</h3>
+                    <p class="text-gray-400 text-sm">If a server drops, our DNS routes you to a backup in under a minute &mdash; no manual reconnect, no app restart.</p>
+                </div>
+                <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6 tf-card">
+                    <div class="text-3xl mb-3">&#x1F4E1;</div>
+                    <h3 class="text-lg font-semibold mb-2">Premium EPG</h3>
+                    <p class="text-gray-400 text-sm">7-day program guide baked in. The web player shows what's on now and what's up next, inline.</p>
+                </div>
+                <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6 tf-card">
+                    <div class="text-3xl mb-3">&#x1F4FA;</div>
+                    <h3 class="text-lg font-semibold mb-2">In-browser player</h3>
+                    <p class="text-gray-400 text-sm">Watch on the site &mdash; no app install. VLC, TiviMate, IPTV Smarters, and XC login work too.</p>
+                </div>
+                <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6 tf-card">
+                    <div class="text-3xl mb-3">&#x1F6E1;&#xFE0F;</div>
+                    <h3 class="text-lg font-semibold mb-2">Private service</h3>
+                    <p class="text-gray-400 text-sm">We don't blast your inbox with marketing, share your data, or sell to third parties. Ever.</p>
+                </div>
+                <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-6 tf-card">
+                    <div class="text-3xl mb-3">&#x1F4B3;</div>
+                    <h3 class="text-lg font-semibold mb-2">Cancel anytime</h3>
+                    <p class="text-gray-400 text-sm">PayPal handles billing. Cancel from your dashboard and the service runs to the end of the period you paid for.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Pricing teaser -->
+        <section class="py-12 md:py-16">
+            <div class="bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 rounded-2xl p-8 md:p-12 max-w-4xl mx-auto">
+                <div class="md:flex items-center gap-8">
+                    <div class="flex-1">
+                        <h3 class="text-2xl md:text-3xl font-bold mb-2">Starts at <span class="text-frog">$36</span> for 3 months</h3>
+                        <p class="text-gray-400 mb-6 md:mb-0">12 months is <span class="text-white font-semibold">$120</span> &mdash; our best value. Cancel anytime, no contracts.</p>
+                    </div>
+                    <a href="pricing.html"
+                       class="inline-block bg-frog hover:bg-green-500 text-gray-900 font-semibold px-6 py-3 rounded-lg transition-colors tf-focus whitespace-nowrap">
+                        See plans &rarr;
+                    </a>
+                </div>
+            </div>
+        </section>
+
+        <!-- Setup teaser -->
+        <section class="py-12 md:py-16">
+            <div class="text-center mb-8">
+                <h2 class="text-3xl md:text-4xl font-bold mb-3">Ready in minutes</h2>
+                <p class="text-gray-400">Pick a device, follow the steps, you're watching.</p>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 max-w-3xl mx-auto">
+                <a href="setup.html#android" class="tf-card bg-gray-800/60 border border-gray-700 rounded-xl p-5 text-center">
+                    <div class="text-3xl mb-2">&#x1F4F1;</div>
+                    <div class="font-semibold">Android</div>
+                    <div class="text-xs text-gray-500 mt-1">Phone, tablet, Android TV</div>
+                </a>
+                <a href="setup.html#firestick" class="tf-card bg-gray-800/60 border border-gray-700 rounded-xl p-5 text-center">
+                    <div class="text-3xl mb-2">&#x1F525;</div>
+                    <div class="font-semibold">Fire Stick</div>
+                    <div class="text-xs text-gray-500 mt-1">Sideload IPTV Smarters</div>
+                </a>
+                <a href="setup.html#roku" class="tf-card bg-gray-800/60 border border-gray-700 rounded-xl p-5 text-center">
+                    <div class="text-3xl mb-2">&#x1F4FA;</div>
+                    <div class="font-semibold">Roku</div>
+                    <div class="text-xs text-gray-500 mt-1">IPTV Smarters from store</div>
+                </a>
             </div>
         </section>
     </main>
 
     <footer class="border-t border-gray-800 mt-16">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-sm text-gray-500 flex flex-col md:flex-row items-center justify-between gap-3">
-            <div>© Tree Frog Plus — Coming soon.</div>
+            <div>&copy; Tree Frog Plus.</div>
             <div class="flex items-center gap-4">
                 <a href="https://free.tfplus.stream" class="hover:text-white transition-colors">Free Site</a>
-                <a href="https://free.tfplus.stream/playlist.m3u" class="hover:text-white transition-colors">M3U</a>
+                <a href="login.html" class="hover:text-white transition-colors">Sign in</a>
+                <a href="setup.html" class="hover:text-white transition-colors">Setup</a>
             </div>
         </div>
     </footer>
-
-    <script>
-        // Stamp today's date in the footer so the page never feels frozen.
-        (function () {
-            const el = document.getElementById("last-updated");
-            if (!el) return;
-            const d = new Date();
-            const opts = { year: "numeric", month: "long", day: "numeric" };
-            el.textContent = d.toLocaleDateString("en-US", opts);
-        })();
-    </script>
 </body>
 </html>

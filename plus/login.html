@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign in &mdash; Tree Frog Plus</title>
+    <meta name="description" content="Sign in to your Tree Frog Plus account.">
+    <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: { frog: '#22c55e' } } }
+        }
+    </script>
+    <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body class="bg-gray-900 text-white min-h-screen antialiased selection:bg-frog selection:text-white">
+
+    <nav class="border-b border-gray-800 bg-gray-900/80 backdrop-blur-md sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <a href="/" class="flex items-center gap-2">
+                <img src="/assets/logo.svg" alt="Tree Frog Plus" class="w-8 h-8"/>
+                <span class="font-bold text-xl tracking-tight">Tree Frog <span class="text-frog">Plus</span></span>
+            </a>
+            <div class="flex items-center gap-3">
+                <a href="setup.html" class="text-sm text-gray-300 hover:text-white hidden sm:inline">Setup</a>
+                <a href="https://free.tfplus.stream" class="text-sm text-gray-300 hover:text-white hidden sm:inline">Free Site</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-md mx-auto px-4 py-12 md:py-20">
+        <div class="bg-gray-800/60 border border-gray-700 rounded-2xl p-8">
+            <h1 class="text-2xl font-bold mb-2 text-center">Sign in</h1>
+            <p class="text-sm text-gray-400 text-center mb-6">
+                Use the email &amp; password from your welcome email.
+            </p>
+
+            <form id="login-form" autocomplete="on" novalidate>
+                <label class="block mb-4">
+                    <span class="text-sm text-gray-300 mb-1 block">Email</span>
+                    <input type="email" name="email" required autocomplete="username"
+                           class="w-full bg-gray-900 border border-gray-700 text-white placeholder-gray-500 rounded-lg px-3 py-2.5 tf-focus"/>
+                </label>
+                <label class="block mb-5">
+                    <span class="text-sm text-gray-300 mb-1 block">Password</span>
+                    <input type="password" name="password" required autocomplete="current-password"
+                           class="w-full bg-gray-900 border border-gray-700 text-white placeholder-gray-500 rounded-lg px-3 py-2.5 tf-focus"/>
+                </label>
+
+                <button type="submit"
+                        class="w-full bg-frog hover:bg-green-500 text-gray-900 font-semibold px-6 py-3 rounded-lg transition-colors tf-focus">
+                    Sign in
+                </button>
+            </form>
+
+            <p class="text-xs text-gray-500 text-center mt-6">
+                Forgot your password? Reply to your welcome email &mdash; we'll send you a new one.
+            </p>
+        </div>
+
+        <p class="text-center text-sm text-gray-500 mt-6">
+            Don't have an account? <a href="pricing.html" class="text-frog hover:underline">See plans</a>.
+        </p>
+    </main>
+
+    <footer class="border-t border-gray-800 mt-16">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-sm text-gray-500 flex flex-col md:flex-row items-center justify-between gap-3">
+            <div>&copy; Tree Frog Plus.</div>
+            <div class="flex items-center gap-4">
+                <a href="https://free.tfplus.stream" class="hover:text-white transition-colors">Free Site</a>
+                <a href="setup.html" class="hover:text-white transition-colors">Setup</a>
+            </div>
+        </div>
+    </footer>
+
+    <script src="/assets/app.js"></script>
+    <script>
+        // If already signed in, jump straight to the dashboard.
+        (async function () {
+            try {
+                const me = await window.tf.api("/api/account/info");
+                if (me && me.email) window.location.href = "dashboard.html";
+            } catch (e) { /* not signed in — stay here */ }
+        })();
+
+        window.tf.bindForm(document.getElementById("login-form"), async (form) => {
+            const fd = new FormData(form);
+            const data = await window.tf.api("/api/auth/login", {
+                method: "POST",
+                body: {
+                    email:    String(fd.get("email")    || "").trim().toLowerCase(),
+                    password: String(fd.get("password") || ""),
+                },
+            });
+            if (data && data.ok) {
+                window.location.href = "dashboard.html";
+            } else {
+                window.tf.toast("Login failed.", "error");
+            }
+        });
+    </script>
+</body>
+</html>

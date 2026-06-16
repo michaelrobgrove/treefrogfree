@@ -1,0 +1,41 @@
+# Tree Frog Plus — Pages project config.
+#
+# This file is used by `wrangler pages deploy` to find the
+# project's KV bindings and vars. The Pages project name is
+# `treefrogplus`; its production branch is currently `production`
+# and will be flipped to `beta` when we're ready to ship.
+
+name = "treefrogplus"
+
+# KV namespace for account + session storage. The `id` is the
+# production namespace; `wrangler pages dev` auto-creates and
+# binds the *_preview namespace.
+[[kv_namespaces]]
+binding = "PLUS_KV"
+id = "a0a2c68a61f54a26b18a93f900298118"
+preview_id = "8753343e8e2244e6a7d5a07b7f918dbc"
+
+# Non-secret vars. Set in the Cloudflare dashboard for
+# `treefrogplus` under Settings → Environment variables, or in
+# this file under [vars]. Defaults below match the beta env.
+#
+# [vars]
+# PAYPAL_API_BASE = "https://api-m.sandbox.paypal.com"
+# PUBLIC_BASE_URL = "https://beta.tfplus.stream"
+# DNS_PRIMARY     = "https://apex.tfplus.stream"
+# DNS_SECONDARY   = "http://comet.tfplus.stream"
+# BOUQUET_US          = "132"   # ← fill from action=bouquet
+# BOUQUET_US_ADULT    = "152"
+# BOUQUET_US_CA       = "162"
+# BOUQUET_US_CA_ADULT = "172"
+# PAYPAL_PLAN_3M_US          = "P-XXXX"
+# PAYPAL_PLAN_3M_US_ADULT    = "P-XXXX"
+# ... 9 more ...
+# RESEND_FROM_ADDRESS  = "Tree Frog Plus <noreply@tfplus.stream>"
+
+# Secrets — set via `wrangler pages secret put NAME` (NEVER commit):
+#   PAYPAL_CLIENT_ID
+#   PAYPAL_CLIENT_SECRET
+#   PAYPAL_WEBHOOK_ID
+#   GOLDPANEL_API_KEY
+#   RESEND_API_KEY
