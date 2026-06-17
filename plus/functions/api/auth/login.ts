@@ -144,6 +144,8 @@ export const onRequestPost = async (ctx: PagesContext): Promise<Response> => {
     try {
         info = await getDeviceInfo({ username, password }, ctx.env as Record<string, unknown>);
     } catch (e) {
+        // Log the actual error for debugging
+        console.error("getDeviceInfo failed:", (e as Error).message);
         // Constant-time-ish: still hash to avoid timing oracle
         // when there's no local record.
         if (!acct) {

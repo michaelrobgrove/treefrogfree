@@ -57,6 +57,7 @@ export interface Bouquet {
 export function getApiKey(env: Record<string, unknown>): string {
     const v = (env as any).GOLDPANEL_API_KEY;
     if (typeof v !== "string" || !v) {
+        console.error("GOLDPANEL_API_KEY not found in env. Available keys:", Object.keys(env));
         throw new Error("GOLDPANEL_API_KEY is not configured.");
     }
     return v;
